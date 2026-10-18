@@ -1,6 +1,6 @@
 // dsh-taskmaster 插件入口（S1 施工中）。
-// 已完成：#1~#9 + #10 graph-ctl（人裁暂停/恢复/停止/注销）。
-// 待续：Boot(#11) → statuser(#12) → 开关降级(#13) → tm_* 工具面(#14)。
+// 已完成：#1~#10 + #11 Boot（五步自举/崩溃重建/在途重挂）。
+// 待续：statuser(#12) → 开关降级(#13) → tm_* 工具面(#14)。
 // 施工序与出口判据见 docs/projects/PRJ-0002/plan/taskmaster-plan.md。
 
 export { atomicWriteFileSync } from "./persister/atomic-write.js";
@@ -17,3 +17,6 @@ export { Acceptor, EvidenceInsufficientError, NotRunningError } from "./acceptor
 export { Monitor } from "./monitor/monitor.js";
 export { Reconciler } from "./reconciler/reconciler.js";
 export { GraphCtl, ConfirmRequiredError } from "./lifecycle/graph-ctl.js";
+export { boot, BootRefusedError } from "./engine/boot.js";
+export { loadConfig, DEFAULT_CONFIG } from "./engine/config.js";
+export { rebuildProjection } from "./engine/rebuild.js";
