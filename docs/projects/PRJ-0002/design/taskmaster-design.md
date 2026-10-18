@@ -116,7 +116,7 @@ tm_* 工具面 --> 引擎 service（常驻）
 ## 数据模型  serves: FR-1、FR-14、NFR-5
 
 - **实体与字段**
-  - `Graph@v`：tasks[]（id/陈述/checks/写域/回合预算/前置边/kind/story/里程碑）；meta（graphId/version/created）。
+  - `Graph@v`：tasks[]（id/陈述/checks/写域/回合预算/前置边/kind/story/里程碑/expansion(atomic|expanded)/outputs[{name,kind:file|check|value,path?}]）；meta（graphId/version/created）。
   - `Binding`：graphId / graphVersion / taskId / runId（世代）/ sessionId / channel / dispatchedAt / startedAt / lastEventSeq / state(active|closed)。
   - `Event`：seq（单调）/ ts / graphId / taskId? / kind（register|dispatch|submit|accept|reject|stall|dead|pause|resume|stop|deregister|verdict…）/ payload 摘要。
   - `StateProjection`：taskId → status（pending/ready/planned/dispatching/running/blocked/done）+ 待处置标记；**可重建，不是事实源**。

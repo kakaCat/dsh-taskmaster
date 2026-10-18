@@ -3,9 +3,15 @@
 
 const ALLOWED_API_VERSION = "taskmaster/v1";
 const VERIFY_KINDS = new Set(["mechanical", "human"]);
+const EXPANSION_KINDS = new Set(["atomic", "expanded"]);
+const OUTPUT_KINDS = new Set(["file", "check", "value"]);
 const GRAPH_KEYS = new Set(["apiVersion", "tasks"]);
-const TASK_KEYS = new Set(["id", "statement", "deps", "checks", "writeScopes", "roundBudget", "kind", "story", "milestone"]);
+const TASK_KEYS = new Set([
+  "id", "statement", "deps", "checks", "writeScopes", "roundBudget", "kind", "story", "milestone",
+  "expansion", "outputs",
+]);
 const CHECK_KEYS = new Set(["text", "verify", "file", "command"]);
+const OUTPUT_KEYS = new Set(["name", "kind", "path"]);
 
 /** 未知键报错不忽略（IF-1 兼容性约定：schema 只增字段，拼错的键必须当场暴露） */
 function unknownKeys(obj: any, allowed: Set<string>, at: string, issues: any[]) {
@@ -106,6 +112,39 @@ export function validateGraph(graph) {
     }
     if (t.roundBudget !== undefined && (!Number.isSafeInteger(t.roundBudget) || t.roundBudget <= 0)) {
       issues.push({ target: `${at}.roundBudget`, reason: "roundBudget 必须是正整数" });
+    }
+    // 拆解粒度：缺省 = atomic（旧图无此字段，行为不变）
+    if (t.expansion !== undefined && !EXPANSION_KINDS.has(t.expansion)) {
+      issues.push({ target: `${at}.expansion`, reason: `expansion 只能是 atomic|expanded，实际为 ${JSON.stringify(t.expansion)}` });
+    }
+    // 产出承诺：边按 output.name 引用，name 必须唯一
+    if (t.outputs !== undefined) {
+      if (!Array.isArray(t.outputs)) {
+        issues.push({ target: `${at}.outputs`, reason: "outputs 必须是数组" });
+      } else {
+        const seenOutputs = new Set();
+        t.outputs.forEach((o, j) => {
+          const oat = `${at}.outputs[${j}]`;
+          if (o === null || typeof o !== "object" || Array.isArray(o)) {
+            issues.push({ target: oat, reason: "产出声明必须是对象 { name, kind, path? }" });
+            return;
+          }
+          unknownKeys(o, OUTPUT_KEYS, oat, issues);
+          if (typeof o.name !== "string" || !o.name.trim()) {
+            issues.push({ target: `${oat}.name`, reason: "产出名称必须是非空字符串" });
+          } else if (seenOutputs.has(o.name)) {
+            issues.push({ target: `${oat}.name`, reason: `产出名称 "${o.name}" 重复（边按 name 引用，必须唯一）` });
+          } else {
+            seenOutputs.add(o.name);
+          }
+          if (!OUTPUT_KINDS.has(o.kind)) {
+            issues.push({ target: `${oat}.kind`, reason: `kind 只能是 file|check|value，实际为 ${JSON.stringify(o.kind)}` });
+          }
+          if (o.path !== undefined && typeof o.path !== "string") {
+            issues.push({ target: `${oat}.path`, reason: "path 必须是字符串" });
+          }
+        });
+      }
     }
   });
 

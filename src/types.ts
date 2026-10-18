@@ -9,6 +9,18 @@ export type Check =
   | string
   | { text: string; verify?: "mechanical" | "human"; file?: string; command?: string };
 
+/** 拆解粒度：atomic = 可直接执行；expanded = 已展开为子图（承诺由子图 outputs 兑现） */
+export type TaskExpansion = "atomic" | "expanded";
+
+/** 产出物：file = 路径、check = 可核验判据、value = 值/契约摘要 */
+export type OutputKind = "file" | "check" | "value";
+
+export interface TaskOutput {
+  name: string;
+  kind: OutputKind;
+  path?: string;
+}
+
 export interface Task {
   id: string;
   statement: string;
@@ -19,6 +31,10 @@ export interface Task {
   kind?: string;
   story?: string;
   milestone?: string;
+  /** 缺省语义 = atomic（旧图没有该字段，行为不变） */
+  expansion?: TaskExpansion;
+  /** 对外产出承诺；边（from: 节点.output）按 name 引用 */
+  outputs?: TaskOutput[];
 }
 
 export interface Graph {

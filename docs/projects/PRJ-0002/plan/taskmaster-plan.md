@@ -86,3 +86,7 @@ updated: 2026-10-18
   - **就绪探测**（`src/host/channels.ts`）：`channels.available()` / `channels.pending()`。`pending` 只在真·暂时态返回 true：服务 impl 已注册但 `fiber.state !== 2`；或服务 active 但 provider（spawn/fork）尚未注册；或启动宽限 20s 内服务尚未出现。宽限过后仍无执行面 → `pending=false` → 照旧 `DeliveryFailed` 降级（**永久不存在仍要显式报警**，不静默）。
   - **投递器步骤 ⓪**：占位（`ready → dispatching`）**之前**先问 `available()`；未就绪且 `pending()` → 抛 `DeliveryDeferredError`，**零占位、零绑定、零失败留痕**，任务留 `ready`。reconciler 两处 catch 先认延迟（记 `delivery-deferred:<taskId>`）再认失败，故既不降级也不写 failed run，下一拍自然重试。
   - **真机验证**（重启窗口内冷启动竞态，见 [真机验证报告](taskmaster-live-verification.md)）：宿主重启后引擎 `17:42:06.260Z` 取锁并立即首拍，`dispatch@17:42:11.321Z` 恰为锁后 1 个 beat —— 首拍被延迟逻辑接管、下一拍补投递成功；无 `delivery-failed`、`degraded:false`；执行者交卷 `accept@17:43:41.669Z`，图转 `asleep`。
+- v0.10（2026-10-19）：**task schema 扩展（向后兼容）**（123/123 + tsc 0，dist 已重建）。为 L2 展开补上承载字段：
+  - **新字段**：`tasks[].expansion`（`atomic|expanded`，缺省语义 = atomic）、`tasks[].outputs`（`[{name, kind:file|check|value, path?}]`；name 在任务内唯一，边按 name 引用）。
+  - **校验**：形状/枚举/未知键逐条报出（`tasks[i].expansion`、`tasks[i].outputs[j].*`）；旧图无新字段照常通过；未知键仍以 `invalid-graph` 拒绝，schema 只增不改。
+  - **入口不变**：仍只经 `validateGraph` / `tm_upsert` 单一入口；新字段随版本快照落盘、可回读。

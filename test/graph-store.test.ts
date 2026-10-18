@@ -93,3 +93,63 @@ test("多图共存：各自版本序列与事件流互不影响", () => {
   assert.equal(store.eventLog(a.graphId).readAll().length, 2);
   assert.equal(store.eventLog(b.graphId).readAll().length, 1);
 });
+
+// ── schema 扩展：expansion / outputs（向后兼容；未知键仍拒）──────────
+
+test("schema 扩展：expansion/outputs 被 validateGraph 接受，旧图行为不变", () => {
+  const legacy = validGraph();
+  assert.deepEqual(validateGraph(legacy), []); // 旧图无新字段照常通过
+
+  const extended = validGraph();
+  extended.tasks[0].expansion = "expanded";
+  extended.tasks[0].outputs = [
+    { name: "orders.sql", kind: "file", path: "migrations/003_orders.sql" },
+    { name: "orders-contract", kind: "value" },
+    { name: "migration-check", kind: "check" },
+  ];
+  extended.tasks[1].expansion = "atomic";
+  assert.deepEqual(validateGraph(extended), []);
+});
+
+test("schema 扩展：新字段形状错误逐条报出（枚举 / 元素 / 重复 name / 未知键）", () => {
+  const g = validGraph();
+  g.tasks[0].expansion = "later"; // 不在 atomic|expanded
+  g.tasks[0].outputs = [
+    { name: "", kind: "file" },
+    { name: "dup", kind: "file", path: 1, bogus: true },
+    { name: "dup", kind: "artifact" },
+    "plain",
+  ];
+  const targets = validateGraph(g).map((i) => i.target);
+  assert.ok(targets.includes("tasks[0].expansion"));
+  assert.ok(targets.includes("tasks[0].outputs[0].name"));
+  assert.ok(targets.includes("tasks[0].outputs[1].path"));
+  assert.ok(targets.includes("tasks[0].outputs[1].bogus"));
+  assert.ok(targets.includes("tasks[0].outputs[2].name")); // 重复 name
+  assert.ok(targets.includes("tasks[0].outputs[2].kind")); // 非法枚举
+  assert.ok(targets.includes("tasks[0].outputs[3]")); // 不是对象
+});
+
+test("schema 扩展：outputs 非数组被拒；拼错的任务键仍是未知字段", () => {
+  const g = validGraph();
+  (g.tasks[0] as any).outputs = { name: "x", kind: "file" };
+  (g.tasks[1] as any).output = []; // 拼错（单数）
+  const issues = validateGraph(g);
+  const targets = issues.map((i) => i.target);
+  assert.ok(targets.includes("tasks[0].outputs"));
+  assert.ok(targets.includes("tasks[1].output"));
+  const unknown = issues.find((i) => i.target === "tasks[1].output")!;
+  assert.match(unknown.reason, /未知字段/);
+  assert.match(unknown.reason, /outputs/); // 允许清单已包含新字段
+});
+
+test("schema 扩展：新字段随版本快照落盘并可回读", () => {
+  const store = new GraphStore(scratch());
+  const g = validGraph();
+  g.tasks[0].expansion = "expanded";
+  g.tasks[0].outputs = [{ name: "orders.sql", kind: "file", path: "migrations/003_orders.sql" }];
+  const r = store.upsert(g);
+  const read = store.get(r.graphId) as any;
+  assert.equal(read.tasks[0].expansion, "expanded");
+  assert.deepEqual(read.tasks[0].outputs, [{ name: "orders.sql", kind: "file", path: "migrations/003_orders.sql" }]);
+});
