@@ -1,0 +1,156 @@
+# .dsh/file-format-specs/metrics/spec.yaml —— 埋点与指标方案格式规范
+# 结构取自四条主线的交集：
+#   Google   ：Goals → Signals → Metrics（HEART）+ OEC / 实验设计 + 上线前可观测性
+#   Amazon   ：输入指标 vs 输出指标 + WBR 节奏 + PR-FAQ 的「怎么衡量成功」
+#   Cagan    ：价值 / 可用性 / 可行性 / 商业可行性 四风险的可证伪假设
+#   Wiegers  ：指标也是需求——可量化、可验证、可追溯（指标 ↔ 埋点双向追溯）
+ext: md
+priority: 85
+# 关键词包含匹配：metrics 能命中 metrics.md / 埋点-xxx.md / 指标方案.md
+match:
+  - "metrics"
+  - "埋点"
+  - "指标方案"
+  - "instrumentation"
+mode: block
+diff_mode: delta
+max_attempts: 3
+on_exhausted: allow
+
+# —— 规则引擎 ——
+derive:
+  - fact: metricIdCount          # 全文数 M-1 这类编号（含表格单元格）
+    fn: countIds
+    args: [["M"]]
+
+functions:
+  hasOwner:
+    expr: "!!(frontmatter.owner || frontmatter.owner_team)"
+
+  noPlaceholder:
+    expr: "!/TODO|TBD|待补充/.test(text)"
+
+  # 指标 ↔ 埋点双向追溯（Wiegers）：每个指标明细必须引用至少一个埋点编号；
+  # 每个埋点编号必须至少被一个指标引用。返回违规列表。
+  metricEventTrace:
+    script: |
+      const idxOf = new Map()
+      doc.bodyLineNos.forEach((n, i) => idxOf.set(n, i))
+      const blockOf = (id) => {
+        const h = doc.headings.find((x) => new RegExp('^' + id + '\\b').test(x.text.trim()))
+        if (!h) return ''
+        const start = idxOf.get(h.line)
+        if (start === undefined) return ''
+        let end = doc.bodyLines.length
+        for (const o of doc.headings) {
+          if (o.line <= h.line || o.level > h.level) continue
+          const j = idxOf.get(o.line)
+          if (j !== undefined && j < end) end = j
+        }
+        return doc.bodyLines.slice(start, end).join('\n')
+      }
+      const metricIds = []
+      const eventIds = []
+      for (const t of doc.tables) {
+        const head = t.header.join('|')
+        if (head.indexOf('编号') >= 0 && head.indexOf('指标') >= 0) {
+          for (const r of t.rows) { const v = String(r[0] || '').trim(); if (/^M-\d+$/.test(v)) metricIds.push(v) }
+        }
+        if (head.indexOf('事件名') >= 0) {
+          for (const r of t.rows) { const v = String(r[0] || '').trim(); if (/^EV-\d+$/.test(v)) eventIds.push(v) }
+        }
+      }
+      const refsOf = new Map()
+      const out = []
+      for (const m of metricIds) {
+        const refs = api.collectIds(blockOf(m), ['EV'])
+        refsOf.set(m, refs)
+        if (refs.length === 0) out.push(api.violation(m + ' 的明细没有引用任何埋点编号（EV-x）：指标必须能追到埋点'))
+      }
+      for (const e of eventIds) {
+        const used = metricIds.some((m) => (refsOf.get(m) || []).indexOf(e) >= 0)
+        if (!used) out.push(api.violation(e + ' 没有被任何指标引用：埋点要么删掉，要么补上它服务的指标'))
+      }
+      return out
+
+rules:
+  - id: fm
+    assert:
+      fn: frontmatterRequired
+      args:
+        - keys: [title, status]
+  - id: status-enum
+    assert: { fn: frontmatterEnum, args: [{ key: status, values: [draft, review, approved, superseded] }] }
+
+  # 必备章节，按发布顺序（结构节只认 H2）
+  - id: sections
+    assert:
+      fn: sectionsRequired
+      args:
+        - order: true
+          headings:
+            - 摘要
+            - 目标与决策用途
+            - 假设与风险验证
+            - 指标框架
+            - 指标体系
+            - 指标定义
+            - 反指标与护栏
+            - 埋点清单
+            - 实验与灰度设计
+            - 数据链路与质量
+            - 看板与复盘节奏
+            - 上线验收与签署
+            - 开放问题
+            - 附录
+
+  # 关键表格：缺表 / 缺列都会被打回
+  # 决策表：Google 的 Goals——不能改变决策的指标不写
+  - id: decision-table
+    assert: { fn: tableRequired, args: [{ under: 目标与决策用途, header: [决策, 依据指标, 达标时怎么做, 不达标时怎么做] }] }
+  # 四风险表：Cagan 价值 / 可用性 / 可行性 / 商业可行性
+  - id: risk-table
+    assert: { fn: tableRequired, args: [{ under: 假设与风险验证, header: [风险类型, 假设, 验证方式, 判定标准], min_rows: 4 }] }
+  # Goals → Signals → Metrics（HEART）
+  - id: heart-table
+    assert: { fn: tableRequired, args: [{ under: 指标框架, header: [HEART 维度, 目标, 信号, 指标, 服务风险] }] }
+  # Amazon 输入 / 输出 / 诊断分层
+  - id: hierarchy-table
+    assert: { fn: tableRequired, args: [{ under: 指标体系, header: [层级, 指标, 作用, 是否可干预] }] }
+  - id: metric-table
+    assert: { fn: tableRequired, args: [{ under: 指标定义, header: [编号, 指标, 层级, 方向, 基线, 目标, 时间窗, 阈值] }] }
+  # 每个 M-x 都要有明细：定义 / 计算口径 / 数据来源 / 验证方式 必填
+  - id: metric-details
+    assert: { fn: idDetails, args: [{ under: 指标定义, fields: [定义, 计算口径, 数据来源, 验证方式], optional: [分段, 已知偏差] }] }
+  - id: guardrail-table
+    assert: { fn: tableRequired, args: [{ under: 反指标与护栏, header: [主指标, 护栏指标, 阈值, 触发动作] }] }
+  - id: event-table
+    assert: { fn: tableRequired, args: [{ under: 埋点清单, header: [编号, 事件名, 触发时机, 关键属性, 上报方式, 隐私等级, 负责人] }] }
+  # 实验 / 灰度：每个设定都要给理由，OEC 与停止规则不许省
+  - id: experiment-table
+    assert: { fn: tableRequired, args: [{ under: 实验与灰度设计, header: [变量, 设定, 理由], min_rows: 6 }] }
+  - id: pipeline-table
+    assert: { fn: tableRequired, args: [{ under: 数据链路与质量, header: [环节, 数据源, 延迟, 校验规则, 断流告警] }] }
+  - id: cadence-table
+    assert: { fn: tableRequired, args: [{ under: 看板与复盘节奏, header: [节奏, 看什么, 谁看, 触发动作] }] }
+  # 埋点是发布的一部分：验收项 + 验证方式 + 负责人
+  - id: acceptance-table
+    assert: { fn: tableRequired, args: [{ under: 上线验收与签署, header: [验收项, 合格标准, 验证方式, 负责人], min_rows: 4 }] }
+  - id: open-questions
+    assert: { fn: tableRequired, args: [{ under: 开放问题, header: [问题, 选项, 负责人, 截止] }] }
+
+  - id: has-owner
+    when: { path: "frontmatter.status", op: "notEmpty" }   # 守卫：只对有 status 的文档生效
+    assert: { fn: "hasOwner", message: "埋点与指标方案必须有 owner 或 owner_team" }
+    priority: 10
+
+  - id: at-least-one-metric
+    assert: { path: "metricIdCount", op: "gte", value: 1, message: "至少一条指标编号（M-1…）" }
+
+  # 指标 ↔ 埋点双向追溯（script 自定义函数）
+  - id: metric-event-trace
+    assert: { fn: metricEventTrace }
+
+  - id: no-placeholder
+    severity: warning
+    assert: { fn: noPlaceholder, message: "文档里不能留 TODO / TBD / 待补充" }

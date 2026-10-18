@@ -1,0 +1,118 @@
+# .dsh/file-format-specs/design/spec.yaml —— 设计文档（Design Doc）格式规范
+# 结构取自四条主线的交集：
+#   Google  ：Context & Scope → Goals / Non-Goals → Alternatives → Cross-Cutting → Open Questions
+#   Amazon  ：从客户倒推 + 内部 FAQ（最坏情况 / 怎么退 / 谁被叫起来）+ 不可逆动作单独标出
+#   Cagan   ：四风险（价值 / 可用性 / 可行性 / 商业可行性）必须给证据，价值未验证不许开工
+#   Wiegers ：设计要对得上需求（需求来源 + 追溯）+ 接口是可验证的契约 + 章节级 serves 标注
+ext: md
+priority: 80
+# 文件名定不了就用路径约束：任意 **/design/**/*.md（只有 match_path 也可以）
+match_path:
+  - "**/design/**/*.md"
+mode: block
+diff_mode: delta
+max_attempts: 3
+on_exhausted: allow
+
+# —— 规则引擎 ——
+derive:
+  - fact: interfaceCount          # 全文数 IF-1 这类编号（含表格单元格）
+    fn: countIds
+    args: [["IF"]]
+
+functions:
+  hasOwner:
+    expr: "!!(frontmatter.owner || frontmatter.owner_team)"
+
+  noPlaceholder:
+    expr: "!/TODO|TBD|待补充/.test(text)"
+
+  # 动态函数 2：script 自定义函数（返回违规列表）
+  # 上下文：doc / text / fileName / relPath / api（hasSection / section / collectIds / frontmatter / violation）
+  # 每个 H2 都要带 serves 标注：指向它服务的需求编号（FR-x / NFR-x），全文性章节写「全文」。
+  # 只查 H2——结构契约的层级是 H2；H3 是节内小节，H4 是编号实例（IF-1），不在此列。
+  everySectionServes:
+    script: |
+      return doc.headings
+        .filter(h => h.level === 2 && !/serves\s*[:：]/i.test(h.text))
+        .map(h => ({ message: '章节「' + h.text + '」缺 serves 标注', line: h.line, key: 'serves:' + h.line }))
+
+rules:
+  - id: fm
+    assert:
+      fn: frontmatterRequired
+      args:
+        - keys: [title, status]
+  - id: status-enum
+    assert: { fn: frontmatterEnum, args: [{ key: status, values: [draft, review, approved, superseded] }] }
+
+  # 必备章节，按评审顺序（结构节只认 H2）
+  - id: sections
+    assert:
+      fn: sectionsRequired
+      args:
+        - order: true
+          headings:
+            - 摘要
+            - 背景与问题
+            - 目标与非目标
+            - 方案总览
+            - 架构与依赖
+            - 数据模型
+            - 接口设计
+            - 备选方案
+            - 四风险与证据
+            - 失败模式与回滚
+            - 跨关注点
+            - 交付拆分与里程碑
+            - 需求追溯
+            - 常见问题
+            - 开放问题
+            - 附录
+
+  # 关键表格：缺表 / 缺列 / 行数不足都会被打回
+  # 需求来源：Amazon「从客户倒推」+ Wiegers 的需求出处
+  - id: origin-table
+    assert: { fn: tableRequired, args: [{ under: 背景与问题, header: [需求编号, 原始诉求, 本设计如何回应] }] }
+  # 接口契约：清单给全貌，明细给语义（错误码与兼容性必填，由 interface-details 判）
+  - id: interface-table
+    assert: { fn: tableRequired, args: [{ under: 接口设计, header: [编号, 接口, 输入, 输出, 失败与错误, 兼容性] }] }
+  - id: interface-details
+    assert: { fn: idDetails, args: [{ under: 接口设计, fields: [语义, 错误码, 兼容性], optional: [幂等与重试] }] }
+  # 备选方案：Google Alternatives——至少两个，其中一个必须是「什么都不做」
+  - id: option-table
+    assert: { fn: tableRequired, args: [{ under: 备选方案, header: [方案, 一句话说明, 优点, 代价, 为什么未选], min_rows: 2 }] }
+  # 四风险：Cagan 价值 / 可用性 / 可行性 / 商业可行性，每项都要有证据
+  - id: risk-table
+    assert: { fn: tableRequired, args: [{ under: 四风险与证据, header: [风险类型, 判断问题, 现有证据, 结论], min_rows: 4 }] }
+  # 失败与回滚：没有回滚方案不许开工
+  - id: failure-table
+    assert: { fn: tableRequired, args: [{ under: 失败模式与回滚, header: [失败场景, 触发条件, 用户可见影响, 检测手段, 回滚动作, 决策人] }] }
+  # 跨关注点：Google Cross-Cutting，逐项给结论，不许留空
+  - id: crosscut-table
+    assert: { fn: tableRequired, args: [{ under: 跨关注点, header: [关注点, 结论, 依据与措施] }] }
+  - id: milestone-table
+    assert: { fn: tableRequired, args: [{ under: 交付拆分与里程碑, header: [里程碑, 内容, 出口判据, 负责人, 目标日期] }] }
+  # 需求追溯：Wiegers——设计节 ↔ 需求 ↔ 测试 ↔ 指标
+  - id: trace-table
+    assert: { fn: tableRequired, args: [{ under: 需求追溯, header: [需求编号, 设计节, 测试用例, 指标] }] }
+  # 内部 FAQ：Amazon 的刻薄问题，少于 6 条说明没认真想
+  - id: faq-table
+    assert: { fn: tableRequired, args: [{ under: 常见问题, header: [问题, 回答], min_rows: 6 }] }
+  - id: open-questions
+    assert: { fn: tableRequired, args: [{ under: 开放问题, header: [问题, 选项, 负责人, 截止] }] }
+
+  - id: has-owner
+    when: { path: "frontmatter.status", op: "notEmpty" }   # 守卫：只对有 status 的文档生效
+    assert: { fn: "hasOwner", message: "设计文档必须有 owner 或 owner_team" }
+    priority: 10
+
+  - id: at-least-one-interface
+    assert: { path: "interfaceCount", op: "gte", value: 1, message: "接口设计至少一条编号（IF-1…）：设计必须有可评审的契约" }
+
+  - id: no-placeholder
+    severity: warning
+    assert: { fn: noPlaceholder, message: "文档里不能留 TODO / TBD / 待补充" }
+
+  - id: every-section-serves
+    assert: { fn: everySectionServes }

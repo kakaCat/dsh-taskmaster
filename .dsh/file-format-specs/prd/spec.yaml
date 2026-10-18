@@ -1,0 +1,83 @@
+# .dsh/file-format-specs/prd/spec.yaml —— PRD 文档格式规范
+# 结构参照业界实践：Cagan / Wiegers 的经典 PRD + Google 设计文档的
+# Goals/Non-Goals · Alternatives · Cross-Cutting + Amazon PR-FAQ 的「从客户倒推」。
+ext: md
+priority: 90
+# 关键词包含匹配：prd 能命中 prd.md / prd-需求.md / 需求-prd.md / PRD.md
+match:
+  - "prd"
+  - "产品需求"
+mode: block
+diff_mode: delta
+max_attempts: 3
+on_exhausted: allow
+
+# —— 规则引擎 ——
+derive:
+  - fact: requirementCount        # 全文数 FR-1 这类编号（含表格单元格）
+    fn: countIds
+    args: [["FR"]]
+
+functions:
+  hasOwner:
+    expr: "!!(frontmatter.owner || frontmatter.owner_team)"
+
+rules:
+  - id: fm
+    assert:
+      fn: frontmatterRequired
+      args:
+        - keys: [title, status]
+  - id: status-enum
+    assert: { fn: frontmatterEnum, args: [{ key: status, values: [draft, review, approved, superseded] }] }
+
+  # 必备章节，按发布顺序（结构节只认 H2）
+  - id: sections
+    assert:
+      fn: sectionsRequired
+      args:
+        - order: true
+          headings:
+            - 摘要
+            - 发布公告
+            - 背景与问题
+            - 目标与非目标
+            - 成功指标
+            - 目标用户与场景
+            - 用户旅程与流程设计
+            - 原型与交互说明
+            - 功能需求
+            - 非功能需求
+            - 边界与异常路径
+            - 约束与依赖
+            - 风险与缓解
+            - 常见问题
+            - 备选方案
+            - 发布与回滚
+            - 时间线
+            - 开放问题
+            - 附录
+
+  # 关键表格：缺表 / 缺列都会被打回
+  - id: metrics-table
+    assert: { fn: tableRequired, args: [{ under: 成功指标, header: [指标, 基线, 目标, 时间窗, 衡量方式] }] }
+  - id: fr-table
+    assert: { fn: tableRequired, args: [{ under: 功能需求, header: [编号, 需求, 优先级, 验收判据] }] }
+  - id: fr-details
+    assert: { fn: idDetails, args: [{ under: 功能需求, fields: [描述, 验收标准], optional: [业务规则, 异常与边界, 不在本期范围] }] }
+  - id: nfr-table
+    assert: { fn: tableRequired, args: [{ under: 非功能需求, header: [编号, 类别, 要求, 优先级] }] }
+  - id: risk-table
+    assert: { fn: tableRequired, args: [{ under: 风险与缓解, header: [风险, 概率, 影响, 缓解方案] }] }
+  - id: timeline-table
+    assert: { fn: tableRequired, args: [{ under: 时间线, header: [里程碑, 时间, 依赖] }] }
+  - id: open-questions
+    assert: { fn: tableRequired, args: [{ under: 开放问题, header: [问题, 选项, 负责人, 截止] }] }
+
+  - id: has-owner
+    when: { path: "frontmatter.status", op: "notEmpty" }   # 守卫：只对有 status 的文档生效
+    assert: { fn: "hasOwner", message: "PRD 必须有 owner 或 owner_team" }
+    priority: 10
+
+  - id: at-least-one-requirement
+    assert: { path: "requirementCount", op: "gte", value: 1, message: "功能需求至少一条编号（FR-1…）" }

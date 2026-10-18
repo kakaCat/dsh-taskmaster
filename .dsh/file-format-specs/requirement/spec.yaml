@@ -1,0 +1,123 @@
+# .dsh/file-format-specs/requirement/spec.yaml —— 需求文档（需求池 + 验证记录）格式规范
+# 定位：**PRD 的上游**。PRD 回答「选中的这个功能做什么、为什么现在做」，
+# 本文回答「这些诉求本身成立吗、凭什么排在前面、哪些已经决定不做」。
+# 结构取自四条主线的交集：
+#   Wiegers ：需求开发（获取 → 分析 → 规格 → 验证）+ 需求属性（来源 / 理由 / 优先级 / 状态）+ 基线变更控制
+#   Cagan   ：机会评估——先用最便宜的方式证伪价值，未验证的诉求不许进 PRD
+#   Amazon  ：从客户倒推——每条需求都要有原始诉求与证据；写不出证据的，那不是需求，是偏好
+#   Google  ：排序要有依据、待定项要有负责人与截止（Open Questions）
+ext: md
+priority: 70
+# 关键词包含匹配：requirement 能命中 requirement.md / 需求文档.md / 需求池.md
+# 「产品需求」故意不在这里声明——它归 prd（priority 90）先命中，避免抢单。
+match:
+  - "requirement"
+  - "需求文档"
+  - "需求池"
+mode: block
+diff_mode: delta
+max_attempts: 3
+on_exhausted: allow
+
+# —— 规则引擎 ——
+derive:
+  - fact: requirementCount        # 全文数 R-1 这类编号（含表格单元格）
+    fn: countIds
+    args: [["R"]]
+
+functions:
+  hasOwner:
+    expr: "!!(frontmatter.owner || frontmatter.owner_team)"
+
+  noPlaceholder:
+    expr: "!/TODO|TBD|待补充/.test(text)"
+
+  # 动态函数：需求清单的「优先级」列必须是 MoSCoW 词表。
+  # 「高 / 中 / 低」既无法机械排序，也无法和 PRD 的优先级对齐——出现即打回。
+  priorityVocabulary:
+    script: |
+      const t = doc.tables.find(x => x.header.join('|').includes('需求陈述') && x.header.join('|').includes('优先级'))
+      if (!t) return []
+      const i = t.header.findIndex(h => h.includes('优先级'))
+      const ok = ['Must', 'Should', 'Could', "Won't"]
+      return t.rows.flatMap((row, n) => {
+        const v = String(row[i] ?? '').trim()
+        return ok.includes(v) ? [] : [{
+          message: '需求清单第 ' + (n + 1) + ' 行优先级「' + v + '」不在 MoSCoW 词表（Must / Should / Could / Won\'t）',
+          line: t.line,
+          key: 'prio:' + n,
+        }]
+      })
+
+rules:
+  - id: fm
+    assert:
+      fn: frontmatterRequired
+      args:
+        - keys: [title, status]
+  - id: status-enum
+    assert: { fn: frontmatterEnum, args: [{ key: status, values: [draft, review, approved, superseded] }] }
+
+  # 必备章节，按需求开发的推进顺序（结构节只认 H2）
+  - id: sections
+    assert:
+      fn: sectionsRequired
+      args:
+        - order: true
+          headings:
+            - 摘要
+            - 背景与来源
+            - 干系人与角色
+            - 待解问题
+            - 假设与风险
+            - 需求清单
+            - 需求明细
+            - 优先级与排序
+            - 需求验证
+            - 变更控制
+            - 与 PRD 的映射
+            - 开放问题
+            - 附录
+
+  # 关键表格：缺表 / 缺列 / 行数不足都会被打回
+  # Wiegers：先有问题，再有需求——问题清单在前
+  - id: problem-table
+    assert: { fn: tableRequired, args: [{ under: 待解问题, header: [问题, 证据, 影响, 谁受影响] }] }
+  # Cagan：最危险假设必须能被证伪
+  - id: assumption-table
+    assert: { fn: tableRequired, args: [{ under: 假设与风险, header: [假设, 如果错了会怎样, 证伪方式, 结论] }] }
+  - id: stakeholder-table
+    assert: { fn: tableRequired, args: [{ under: 干系人与角色, header: [角色, 关注点, 影响程度, 决策权] }] }
+  # 需求清单：编号 + 陈述 + 类型 + 优先级 + 状态（状态含被拒与延期，需求池不只装活下来的）
+  - id: requirement-table
+    assert: { fn: tableRequired, args: [{ under: 需求清单, header: [编号, 需求陈述, 类型, 优先级, 状态] }] }
+  # 每个 R-x 都要有明细：描述 / 来源与证据 / 验收判据 / 优先级理由 必填
+  - id: requirement-details
+    assert: { fn: idDetails, args: [{ under: 需求清单, fields: [描述, 来源与证据, 验收判据, 优先级理由], optional: [依赖与假设, 不做的后果] }] }
+  - id: ranking-table
+    assert: { fn: tableRequired, args: [{ under: 优先级与排序, header: [排序方法, 判据, 本轮结论] }] }
+  # Wiegers 的需求验证：每条进来的需求都要有验证方式与结论
+  - id: validation-table
+    assert: { fn: tableRequired, args: [{ under: 需求验证, header: [需求编号, 验证方式, 结论, 验证人] }] }
+  - id: change-table
+    assert: { fn: tableRequired, args: [{ under: 变更控制, header: [日期, 变更, 谁提的, 决策, 影响] }] }
+  # 追溯接缝：需求池 → PRD（这张表就是两份文档之间的链）
+  - id: prd-mapping-table
+    assert: { fn: tableRequired, args: [{ under: 与 PRD 的映射, header: [需求编号, PRD 需求编号, 状态] }] }
+  - id: open-questions
+    assert: { fn: tableRequired, args: [{ under: 开放问题, header: [问题, 选项, 负责人, 截止] }] }
+
+  - id: has-owner
+    when: { path: "frontmatter.status", op: "notEmpty" }   # 守卫：只对有 status 的文档生效
+    assert: { fn: "hasOwner", message: "需求文档必须有 owner 或 owner_team" }
+    priority: 10
+
+  - id: at-least-one-requirement
+    assert: { path: "requirementCount", op: "gte", value: 1, message: "需求清单至少一条编号（R-1…）" }
+
+  - id: priority-vocabulary
+    assert: { fn: priorityVocabulary }
+
+  - id: no-placeholder
+    severity: warning
+    assert: { fn: noPlaceholder, message: "文档里不能留 TODO / TBD / 待补充" }

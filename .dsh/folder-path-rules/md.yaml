@@ -1,0 +1,66 @@
+# .dsh/folder-path-rules/md.yaml —— markdown 文件的分类规范（由 dsh-file-enhance 读取）
+#
+# 这份文件是**唯一权威**：插件不内置任何生效中的规则，agent 创建文件时也只按它判定。
+# 改完即生效（插件按 mtime 热重载），不需要重启。
+#
+# 本文件由插件冷启动垫片自动生成——直接按你的项目改：增删分类、改 dest 模板、调关键词。
+#
+# 字段说明：
+#   root        该类型文件的主目录（md → docs）
+#   root_allow  根目录白名单（追加在内置默认 README/CHANGELOG/CLAUDE/AGENTS… 之上）
+#   categories  分类表：
+#                folder    = root 下的目录名
+#                keywords  = 用于把「文件主题词/描述」归位
+#                naming    = 文件名风格（kebab-case / camelCase / PascalCase / snake_case / any）
+#                dest      = 相对 root 的落点模板
+#   dest 占位符：{slug} {folder} {root} {auto_number:4} {project_id}
+#
+#   kind: collection = 集合型分类：先有「实例编号文件夹」，文件放在实例里面。
+#     instance.acquire: auto → file_resolve 会自动分配编号并建出 scaffold 骨架目录
+type: md
+root: docs
+root_allow: []
+
+categories:
+  guides:
+    folder: guides
+    keywords: [指南, 教程, guide, tutorial, howto, 手册]
+    dest: "guides/{slug}.md"
+
+  api:
+    folder: api
+    keywords: [接口, api, 接口文档, endpoint]
+    dest: "api/{slug}.md"
+
+  adr:
+    folder: adr
+    keywords: [决策, adr, decision, 取舍, 技术选型]
+    dest: "adr/{auto_number:4}-{slug}.md"
+
+  research:
+    folder: research
+    keywords: [调研, research, 竞品分析, 选型报告, spike, 可行性]
+    dest: "research/{slug}.md"
+
+  project:
+    folder: projects
+    kind: collection
+    keywords: [项目, 需求, 设计, 计划, prd]
+    instance:
+      param: project_id
+      pattern: "^PRJ-\\d{4}$"
+      acquire: auto
+      scaffold: [requirement/, prd/, design/, plan/]
+    variants:
+      requirement:
+        keywords: [需求, requirement]
+        dest: "projects/{project_id}/requirement/{slug}.md"
+      prd:
+        keywords: [prd, 产品文档]
+        dest: "projects/{project_id}/prd/{slug}.md"
+      design:
+        keywords: [设计, design, 方案]
+        dest: "projects/{project_id}/design/{slug}.md"
+      plan:
+        keywords: [计划, plan, 拆分, 排期]
+        dest: "projects/{project_id}/plan/{slug}.md"

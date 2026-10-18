@@ -1,0 +1,250 @@
+# .dsh/file-format-specs/research/spec.yaml —— 调研报告（技术调研 / 竞品分析 / 立项前研究）格式规范
+# 定位：**结论的上游**。PRD 回答「做什么」，设计回答「怎么做」，本文回答
+#   「这个结论凭什么成立」——证据是什么、缺什么、什么条件下结论会翻转。
+# 一份没有证据编号、没有反证、没有信息缺口的「调研报告」，只是把已有观点排版了一遍。
+#
+# 结构取自四条主线的交集：
+#   Google  ：研究文档（Question → Method → Findings → Decision）+ 结论要能被证伪 + Open Questions
+#   Amazon  ：Working Backwards——先写"要让谁做什么决定"，再决定去查什么；客户原话优先于二手总结
+#   McKinsey：MECE 问题分解 + 证据分级（来源可查、样本可复现）+ 结论与事实分离
+#   Wiegers ：调研问题也是需求——可验证、可追溯（问题 ↔ 证据双向追溯）+ 干系人验证
+#
+# 两条机器判据（本 spec 比 prd / design 更狠的地方）：
+#   1. 证据分级词表：证据索引表的「来源分级」列只认 A / B / C / D，且必须至少有一条 A 或 B——
+#      只有 D 级（主观判断 / 传闻）的"调研"不允许落盘。
+#   2. 问题 ↔ 证据双向追溯：每个 Q-x 的明细必须引用至少一条 E-x；每条 E-x 必须至少被一个 Q-x 引用。
+#      拦住两种最常见的烂尾：问题是拍脑袋来的、证据查完没人用。
+ext: md
+priority: 78
+# 关键词包含匹配：research 能命中 research.md / 技术调研-xxx.md / 竞品分析.md / 调研报告.md / spike.md
+# 「调研问题」「调研方法」故意不在这里声明——它们是章节名，单看文件名像报告正文，容易抢单。
+match:
+  - "research"
+  - "调研报告"
+  - "技术调研"
+  - "竞品分析"
+  - "选型报告"
+  - "spike"
+mode: block
+diff_mode: delta
+max_attempts: 3
+on_exhausted: allow
+
+# —— 规则引擎 ——
+derive:
+  # 编号条数必须数「清单表的行」——不能数全文里 Q-x / E-x 的出现次数（同一条会被引用多次，
+  # 而且 E-2 可能只出现在正文引用里）。script / expr 派生拿到的是文档级变量：doc / text / api，
+  # 没有 tables 事实，所以从 doc.tables 里自己找。
+  # 注：facts 在多个 spec 之间共享，这里的 fact 名带 research 前缀以免串台。
+  - fact: researchQuestionList
+    script: |
+      const t = doc.tables.find((x) => x.header.join('|').includes('调研问题'))
+      if (!t) return { count: 0, ids: [] }
+      const i = t.header.findIndex((c) => c.includes('编号'))
+      const ids = i < 0 ? [] : t.rows.map((r) => String(r[i] ?? '').trim()).filter((v) => /^Q-\d+$/.test(v))
+      return { count: ids.length, ids: ids }
+  - fact: researchQuestionCount
+    expr: "(researchQuestionList && researchQuestionList.count) || 0"
+  - fact: researchEvidenceIndex
+    script: |
+      const t = doc.tables.find((x) => x.header.join('|').includes('来源分级'))
+      if (!t) return { count: 0, ids: [] }
+      const i = t.header.findIndex((c) => c.includes('编号'))
+      const ids = i < 0 ? [] : t.rows.map((r) => String(r[i] ?? '').trim()).filter((v) => /^E-\d+$/.test(v))
+      return { count: ids.length, ids: ids }
+  - fact: researchEvidenceCount
+    expr: "(researchEvidenceIndex && researchEvidenceIndex.count) || 0"
+  - fact: researchEvidenceIds
+    expr: "(researchEvidenceIndex && researchEvidenceIndex.ids) || []"
+
+functions:
+  hasOwner:
+    expr: "!!(frontmatter.owner || frontmatter.owner_team)"
+
+  noPlaceholder:
+    expr: "!/TODO|TBD|待补充/.test(text)"
+
+  # 判据 1a：结论表的「立场」列必须是固定词表。
+  # 「建议采纳 / 再想想 / 看情况」这类写法无法被下游引用，也无法机械判断结论是否已经给出——
+  # 出现即打回。与 requirement 的 MoSCoW 词表同一手法。
+  #
+  # 注：脚本上下文只注入 doc / text / api（白名单），**看不到同一个 spec 里的其他函数**，
+  # 所以每个脚本自带一个三行的 findTable 小工具，不跨函数复用。
+  decisionVocabulary:
+    script: |
+      const findTable = (need, cols) => {
+        const t = doc.tables.find((x) => need.every((k) => x.header.join('|').includes(k)))
+        if (!t) return null
+        return { t, i: t.header.findIndex((c) => cols.some((k) => c.includes(k))) }
+      }
+      const found = findTable(['决策', '结论'], ['立场'])
+      if (!found) return []
+      const { t, i } = found
+      if (i < 0) return []
+      const ok = ['采纳', '不采纳', '有条件采纳', '继续调研']
+      return t.rows.flatMap((row, n) => {
+        const v = String(row[i] ?? '').trim()
+        if (v === '' || ok.includes(v)) return []
+        return [{
+          message: '结论表第 ' + (n + 1) + ' 行立场「' + v + '」不在词表（采纳 / 不采纳 / 有条件采纳 / 继续调研）',
+          line: t.line,
+          key: 'stance:' + n,
+        }]
+      })
+
+  # 判据 1b：证据分级 + 至少一条高等级证据。
+  # A 官方文档或源码 / B 可复现实测 / C 二手资料 / D 主观判断；只有 D 级不算调研。
+  evidenceClass:
+    script: |
+      const findTable = (need, cols) => {
+        const t = doc.tables.find((x) => need.every((k) => x.header.join('|').includes(k)))
+        if (!t) return null
+        return { t, i: t.header.findIndex((c) => cols.some((k) => c.includes(k))) }
+      }
+      const found = findTable(['证据', '来源分级'], ['来源分级'])
+      if (!found) return []
+      const { t, i } = found
+      if (i < 0) return []
+      const ok = ['A', 'B', 'C', 'D']
+      const out = []
+      let strong = 0
+      t.rows.forEach((row, n) => {
+        const v = String(row[i] ?? '').trim().toUpperCase()
+        if (v === 'A' || v === 'B') strong += 1
+        if (v === '') {
+          out.push({ message: '证据索引第 ' + (n + 1) + ' 行缺来源分级（A / B / C / D）', line: t.line, key: 'class-missing:' + n })
+          return
+        }
+        if (!ok.includes(v)) {
+          out.push({ message: '证据索引第 ' + (n + 1) + ' 行来源分级「' + v + '」不在词表（A 官方 / B 实测 / C 二手 / D 主观）', line: t.line, key: 'class:' + n })
+        }
+      })
+      if (t.rows.length > 0 && strong === 0) {
+        out.push({ message: '证据索引里至少要有 1 条 A 级（官方文档 / 源码）或 B 级（可复现实测）证据：只有 C / D 级不能支撑结论', line: t.line, key: 'class-strong' })
+      }
+      return out
+
+  # 判据 2：问题 ↔ 证据双向追溯（本 spec 的核心）。
+  #   问题 → 证据：每个 Q-x 的明细小节里必须引用至少一个 E-x，否则这个 Q 是拍脑袋来的。
+  #   证据 → 问题：每条 E-x 必须被至少一个 Q-x 引用，否则这条证据查完没人用（或者该补一个调研问题）。
+  questionEvidenceTrace:
+    script: |
+      const toIds = (list) => (Array.isArray(list) ? list : []).map(String)
+      // 清单行来自 derive（researchQuestionList / researchEvidenceIndex）：只认表里的编号，
+      // 不把正文里的引用当成一条问题 / 一条证据。
+      const qIds = toIds(researchQuestionList && researchQuestionList.ids)
+      const eIds = toIds(researchEvidenceIndex && researchEvidenceIndex.ids)
+      if (qIds.length === 0 || eIds.length === 0) return []
+
+      // 要的是「每个 Q-x 的小节里引用了哪些 E-x」，不是全文引用：所以需要行的下标。
+      const idxOf = new Map()
+      doc.bodyLineNos.forEach((n, i) => idxOf.set(n, i))
+      const blockOf = (id) => {
+        const h = doc.headings.find((x) => new RegExp('^' + id + '\\b').test(x.text.trim()))
+        if (!h) return ''
+        const start = idxOf.get(h.line)
+        if (start === undefined) return ''
+        let end = doc.bodyLines.length
+        for (const o of doc.headings) {
+          if (o.line <= h.line || o.level > h.level) continue
+          const j = idxOf.get(o.line)
+          if (j !== undefined && j < end) end = j
+        }
+        return doc.bodyLines.slice(start, end).join('\n')
+      }
+
+      const refsOf = new Map()
+      const out = []
+      for (const id of qIds) {
+        const refs = api.collectIds(blockOf(id), ['E'])
+        refsOf.set(id, refs)
+        if (refs.length === 0) {
+          out.push({ message: id + ' 的明细没有引用任何证据编号（E-x）：调研问题必须落到证据上', key: 'q-no-evidence:' + id })
+        }
+      }
+      for (const id of eIds) {
+        const used = qIds.some((k) => (refsOf.get(k) || []).indexOf(id) >= 0)
+        if (!used) {
+          out.push({ message: id + ' 没有被任何调研问题引用：要么补上它服务的 Q-x，要么从证据索引里删掉', key: 'e-unused:' + id })
+        }
+      }
+      return out
+
+rules:
+  - id: fm
+    assert:
+      fn: frontmatterRequired
+      args:
+        - keys: [title, status]
+  - id: status-enum
+    assert: { fn: frontmatterEnum, args: [{ key: status, values: [draft, review, approved, superseded] }] }
+
+  # 必备章节，按调研推进顺序（结构节只认 H2）
+  - id: sections
+    assert:
+      fn: sectionsRequired
+      args:
+        - order: true
+          headings:
+            - 摘要
+            - 背景与调研问题
+            - 调研方法与范围界定
+            - 决策与结论
+            - 证据索引
+            - 关键发现
+            - 方案对比矩阵
+            - 结论与建议
+            - 风险与不确定性
+            - 开放问题
+            - 附录
+
+  # 关键表格：缺表 / 缺列 / 行数不足都会被打回
+  # 调研问题清单：问题 + 为什么值得查（决策影响）+ 影响程度
+  - id: question-table
+    assert: { fn: tableRequired, args: [{ under: 背景与调研问题, header: [编号, 调研问题, 决策影响, 影响程度] }] }
+  # 每个 Q-x 都要有明细：调研问题 / 决策影响 / 调研与证据 必填，且「调研与证据」里必须有 E-x
+  # （反证与限定条件按需：写了就不能空）
+  - id: question-details
+    assert: { fn: idDetails, args: [{ under: 背景与调研问题, fields: [调研问题, 决策影响, 调研与证据], optional: [反证与限定条件] }] }
+  # Amazon Working Backwards：先写清"要让谁做什么决定"，再决定去查什么
+  - id: decision-table
+    assert: { fn: tableRequired, args: [{ under: 决策与结论, header: [决策编号, 要做的决定, 决策人, 截止], min_rows: 1 }] }
+  # 证据索引：来源分级这一列是本 spec 的判据 1
+  - id: evidence-table
+    assert: { fn: tableRequired, args: [{ under: 证据索引, header: [编号, 证据, 来源分级, 获取方式与日期] }] }
+  # 关键发现：每条发现都要能指回证据；fact / inference 分列，结论与事实不许混写
+  - id: finding-table
+    assert: { fn: tableRequired, args: [{ under: 关键发现, header: [编号, 发现, 支撑证据, 事实或推断, 可信度] }] }
+  # 对比矩阵：维度必须在同一口径下逐项打分——没有矩阵的对比就是各说各话
+  - id: matrix-table
+    assert: { fn: tableRequired, args: [{ under: 方案对比矩阵, header: [评估维度, 权重] , min_rows: 4 }] }
+  # 结论：立场词表由 decisionVocabulary 判，这里管结构
+  - id: conclusion-table
+    assert: { fn: tableRequired, args: [{ under: 结论与建议, header: [决策编号, 结论, 立场, 成立条件, 翻转条件] }] }
+  # 不确定性：没写出来的盲区不会自己消失；结论失效的触发条件必须显式
+  - id: uncertainty-table
+    assert: { fn: tableRequired, args: [{ under: 风险与不确定性, header: [信息缺口, 影响哪个结论, 获取成本, 处理方式] }] }
+  - id: open-questions
+    assert: { fn: tableRequired, args: [{ under: 开放问题, header: [问题, 选项, 负责人, 截止] }] }
+
+  - id: has-owner
+    when: { path: "frontmatter.status", op: "notEmpty" }   # 守卫：只对有 status 的文档生效
+    assert: { fn: "hasOwner", message: "调研报告必须有 owner 或 owner_team" }
+    priority: 10
+
+  - id: at-least-one-question
+    assert: { path: "researchQuestionCount", op: "gte", value: 1, message: "调研问题清单至少一条编号（Q-1…）：没有问题清单的调研没有边界" }
+  - id: at-least-two-evidence
+    assert: { path: "researchEvidenceCount", op: "gte", value: 2, message: "证据索引至少两条编号（E-1 / E-2…）：单一来源不能支撑调研结论" }
+
+  # 两条核心判据（动态函数）
+  - id: evidence-class
+    assert: { fn: evidenceClass }
+  - id: question-evidence-trace
+    assert: { fn: questionEvidenceTrace }
+  - id: decision-vocabulary
+    assert: { fn: decisionVocabulary }
+
+  - id: no-placeholder
+    severity: warning
+    assert: { fn: noPlaceholder, message: "文档里不能留 TODO / TBD / 待补充" }
