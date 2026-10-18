@@ -67,3 +67,5 @@ updated: 2026-10-18
 - v0.1（2026-10-18）首版：按 PRD 时间线展开 S0/S1/S2 三批，S1 拆 14 个工作项。
 - v0.2（2026-10-19 凌晨）：S1 #1~#14 全部完成，M1 走查 13 步以端到端测试全绿（87/87，离线假通道/假适配器）。**距离真正 M1 出口还差**：宿主通道适配器（startActivation/branch/spawn 真接法）+ subagent 事件订阅接线 + 宿主插件装配（心跳定时器挂宿主生命周期）。这些是宿主集成工作，不改变已验证的引擎语义。
 - v0.3（2026-10-19 凌晨二轮）：宿主集成落地（90/90）：cordis 插件装配 `src/host/plugin.js`（心跳定时器 + subagent 生命周期事件订阅 + 六个 tm_* 工具）、通道适配器（ctx.subagents.startActivation，live parent = 属主 agent 约束真实兑现）、信号适配器（活性计数/进程存活）、runId 世代先于投递签发（任务包携带凭据）。**Mock 宿主（cordis 形状）全链路测试通过**；剩余 = 真 cordis 宿主联调（Config schema/Service 生命周期/真实 startActivation 请求契约/subagent/end 消息形状），属联调验证不属编码。
+
+- v0.4（2026-10-19）：工程化补齐——全量迁移 TypeScript（src 25 文件 / test 15 文件，Node 24 原生 type-stripping 直跑零构建）；新增 src/types.ts 领域类型；`tsc --noEmit` 零错误。**迁移期欠账**：`noImplicitAny` 暂关（动态 JSON/YAML 边界仍用 any），后续逐模块收紧；真宿主联调与 S2 不受影响。
