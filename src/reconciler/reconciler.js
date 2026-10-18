@@ -11,7 +11,7 @@ import { createHash } from "node:crypto";
 import { readProjection, casWriteProjection } from "../persister/projection-store.js";
 import { atomicWriteFileSync } from "../persister/atomic-write.js";
 import { EventLog } from "../persister/event-log.js";
-import { computeReady, selectBatch, isDeadlocked, isComplete } from "../scheduler/scheduler.js";
+import { computeReady, selectBatch, isDeadlocked, isComplete, dispatchableTasks } from "../scheduler/scheduler.js";
 import { DeliveryFailedError } from "../deliverer/deliverer.js";
 
 const IN_FLIGHT = new Set(["dispatching", "running"]);
@@ -128,22 +128,22 @@ export class Reconciler {
     }
 
     // 已确认未派发（崩溃在 confirm 与投递之间）→ 补投递。
-    // 必须先于就绪空早退：confirmed 批次的任务状态已是 ready，不在 readyInfo.ready 里。
+    // 必须先于就绪空早退：confirmed 批次的任务状态已是 ready，不在就绪计算里。
     const card = this.gate.current(graphId);
     if (card?.state === "confirmed") {
-      let deliveredAny = false;
-      for (const item of card.batch) {
-        const task = graph.tasks.find((t) => t.id === item.taskId);
-        const st = statusMap[task.id]?.status ?? "pending";
-        if (task && st === "ready") {
-          if (this.guard && !this.guard.allowDispatch()) {
-            summary.actions.push("dispatch-skipped-degraded"); // 降级：纯对话流，卡在人手里
-            break;
-          }
+      const deliverable = card.batch
+        .map((item) => graph.tasks.find((t) => t.id === item.taskId))
+        .filter((task) => task && (statusMap[task.id]?.status ?? "pending") === "ready");
+      if (deliverable.length > 0) {
+        // 批次还有未派出的 ready 任务：要么补投递，要么（降级中）等——绝不落出卡逻辑覆盖已确认的卡
+        if (this.guard && !this.guard.allowDispatch()) {
+          summary.actions.push("dispatch-skipped-degraded");
+          return summary;
+        }
+        for (const task of deliverable) {
           try {
             const r = await this.deliverer.deliver({ graphId, graphVersion: card.graphVersion, graph, task }, now);
             summary.actions.push(`delivered:${task.id}:${r.runId}`);
-            deliveredAny = true;
           } catch (e) {
             if (e instanceof DeliveryFailedError) {
               this.guard?.markDegraded("all-channels-down");
@@ -151,9 +151,9 @@ export class Reconciler {
             } else throw e;
           }
         }
+        return summary;
       }
-      // 本批全部已派出（无 ready 剩余）→ 落到下方出卡逻辑，为新的就绪集出下一批卡
-      if (deliveredAny) return summary;
+      // 批次全部派出（无 ready 剩余）→ 落到下方出卡逻辑，为新的就绪集出下一批卡
     }
 
     const readyInfo = computeReady(graph, statusMap);
@@ -171,8 +171,9 @@ export class Reconciler {
       summary.actions.push(`ready:${newlyReady.map((t) => t.id).join(",")}`);
     }
 
-    // 死锁嗅探（去重上报）
-    if (readyInfo.ready.length === 0) {
+    // 死锁嗅探（去重上报）与空集早退：以「可派发集合」为准（pending+ready 同口径）
+    const dispatchable = dispatchableTasks(graph, statusMap);
+    if (dispatchable.length === 0) {
       if (isDeadlocked(readyInfo)) {
         const hash = createHash("sha1")
           .update(readyInfo.waiting.map((w) => w.task.id).sort().join(","))
@@ -199,10 +200,10 @@ export class Reconciler {
     const cardNow = this.gate.current(graphId);
     if (cardNow?.state === "pending") return summary;
 
-    // 出/更新计划卡
-    const batch = selectBatch(readyInfo.ready, { limit: 1 }); // S1 串行
+    // 出/更新计划卡（口径与 confirm 端一致：dispatchable）
+    const batch = selectBatch(dispatchable, { limit: 1 }); // S1 串行
     const offered = this.gate.offer(
-      { graphId, graphVersion: meta.activeVersion, ready: readyInfo.ready, batch, concurrency: 1, autoFacets: this.autoFacets },
+      { graphId, graphVersion: meta.activeVersion, ready: dispatchable, batch, concurrency: 1, autoFacets: this.autoFacets },
       now,
     );
     if (offered.suppressedByReject) {

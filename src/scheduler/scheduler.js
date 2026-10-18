@@ -54,3 +54,16 @@ export function isDeadlocked({ ready, waiting, inFlight }) {
 export function isComplete(graph, statusMap = {}) {
   return graph.tasks.every((t) => (statusMap[t.id]?.status ?? "pending") === "done");
 }
+
+/**
+ * 可派发集合（计划卡哈希的唯一口径，gate.offer 与 confirm 两端必须一致）：
+ * 前驱全 done 且状态 ∈ {pending, ready}——pending 是未物化，ready 是已物化，同一批。
+ */
+export function dispatchableTasks(graph, statusMap = {}) {
+  const statusOf = (id) => statusMap[id]?.status ?? "pending";
+  return graph.tasks.filter((t) => {
+    const st = statusOf(t.id);
+    if (st !== "pending" && st !== "ready") return false;
+    return (t.deps ?? []).every((d) => statusOf(d) === "done");
+  });
+}

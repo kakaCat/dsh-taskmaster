@@ -126,7 +126,7 @@ export class Deliverer {
     // ④ 建绑定（世代签发）；绑定冲突 → 回滚（sessionId 被占等）
     let binding;
     try {
-      binding = this.binder.open({ graphId, graphVersion, taskId: task.id, sessionId, channel: usedChannel });
+      binding = this.binder.open({ graphId, graphVersion, taskId: task.id, sessionId, channel: usedChannel }, now);
     } catch (e) {
       const back = readProjection(statePath);
       casWriteProjection(statePath, back.version, {
