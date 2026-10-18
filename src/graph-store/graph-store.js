@@ -19,6 +19,23 @@ export class GraphNotFoundError extends Error {
   }
 }
 
+export class BadTransitionError extends Error {
+  constructor(graphId, from, to) {
+    super(`bad lifecycle transition: ${graphId} ${from} → ${to}`);
+    this.code = "bad-transition";
+  }
+}
+
+/** 图生命周期迁移表（R-17/18/19 状态机底座；人裁入口在 #10，引擎内部迁移在 reconciler） */
+export const LIFECYCLE_TRANSITIONS = {
+  active: ["paused", "stopping", "asleep", "deregistered"],
+  paused: ["active", "stopping", "deregistered"],
+  stopping: ["stopped", "deregistered"],
+  stopped: ["deregistered"],
+  asleep: ["deregistered"],
+  deregistered: [],
+};
+
 export class GraphStore {
   /** @param dataRoot 数据根（.dsh/taskmaster/） */
   constructor(dataRoot) {
@@ -113,5 +130,24 @@ export class GraphStore {
     return readdirSync(dir, { withFileTypes: true })
       .filter((e) => e.isDirectory())
       .map((e) => e.name);
+  }
+
+  /**
+   * 生命周期迁移（唯一写口）。非法迁移抛 bad-transition。
+   * 引擎内部迁移（active→asleep、stopping→stopped）与人裁操作（#10）都走这里。
+   */
+  setLifecycle(graphId, next) {
+    const metaPath = this.metaPath(graphId);
+    const current = readProjection(metaPath);
+    if (current.data === null) throw new GraphNotFoundError(graphId);
+    const from = current.data.lifecycle;
+    if (!LIFECYCLE_TRANSITIONS[from]?.includes(next)) throw new BadTransitionError(graphId, from, next);
+    casWriteProjection(metaPath, current.version, {
+      ...current.data,
+      lifecycle: next,
+      updatedAt: new Date().toISOString(),
+    });
+    this.eventLog(graphId).append(`graph-${next}`, { graphId, from });
+    return { from, to: next };
   }
 }
