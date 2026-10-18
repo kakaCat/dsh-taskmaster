@@ -14,7 +14,7 @@ updated: 2026-10-18
 
 - **调研问题**：Taskmaster 设计的「宿主插件级常驻引擎 + 心跳对账 + 持久化纪律 + 执行面投递」四个形态前提，在 DSH 现行架构（0.2.1-rc.2）下有没有生产级先例支撑？
 - **办法**：源码与官方 README 研读，覆盖宿主运行时全部 307 个 @deepseek-ai 包，重点解剖先例包 dsh-schedule 全文（dsh-goal-round-driver 作为反面对照）+ 4 个底座包；时间窗 2026-10-18 单日。
-- **结论**：D-1 **采纳**（v0.3：completion notice 收取机制源码级闭合——`subagent/start`/`subagent/end` 生命周期事件经 ctx.events 发布，非 agent 调用方可订阅收集结果；spawn 需 exact live parent agent 的约束转化为设计约束，见 F-8）。
+- **结论**：D-1 **采纳**（v0.5 修正：`subagent/end` 源码级核准——事件载荷为 `{ runId, provider, id, local, stopReason, lastAssistantMessage? }`，**不含结构化结果**；结构化捕获是服务内部行为。引擎订阅事件可得「执行者结束」信号，但交卷证据只认执行者的 `tm_node_update`。spawn 需 exact live parent agent 的约束见 F-8）。
 - **证据强度**：A 级 8 条、B 级 2 条；信息缺口全部闭合：性能量级已由 spike 实测（E-10：5000 任务单拍 P95 ≈ 23ms，节拍假设成立）。
 - **这份调研不能用来决定什么**：不覆盖性能量级（节拍耗时、事件流体积）与多写者协同——前者留给 M1 基准，后者已显式排除在二期。
 
@@ -101,7 +101,7 @@ E-5（dsh-subagent-spawn-in-process 与 dsh-subagent-fork-in-process 包存在�
 
 **反证与限定条件**
 
-- ~~残余细节：completion notice 如何到达非 agent 调用方~~（v0.3 已闭合，E-9）：`subagent/start`/`subagent/end` 生命周期事件经宿主事件总线发布，`subagent/end` 携带结果（含 outputSchema 结构化输出），引擎作为普通 service 订阅即可，无需身处会话。
+- ~~残余细节：completion notice 如何到达非 agent 调用方~~（v0.3 已闭合，v0.5 修正范围，E-9）：`subagent/start`/`subagent/end` 生命周期事件经宿主事件总线发布，非 agent 可订阅。**但 v0.5 源码核准推翻了「事件携带结构化结果」的表述**：载荷只有 `{ runId, provider, id, local, stopReason, lastAssistantMessage? }`；`request.outputSchema` 的结构化捕获在服务内部完成，不经事件。推论（已落 IF-3/设计）：**交卷证据只认执行者的 tm_node_update**，事件只是「执行者结束」信号；Boot 补验收无机械证据可补，在途处置按 processAlive 走「重挂/标 stalled」。
 - v0.3 新约束：`startActivation` 要求 **exact live parent agent**（否则 UNAUTHORIZED）——引擎 spawn 必须以一个存活 agent 为父。属主窗口关闭期间 spawn/activation 两档不可用，须降级 branch 档或排队等属主回来（补投纪律不变）。已转化为 IF-8 设计约束，不再是开放假设。
 
 ## 调研方法与范围界定  serves: 全文
@@ -140,7 +140,7 @@ E-5（dsh-subagent-spawn-in-process 与 dsh-subagent-fork-in-process 包存在�
 | E-6 | 本运行时工具面实测含 window_open/window_dispatch/window_send/spawn_teammate——branch 与 spawn 两档通道在工具层可用 | B | 本会话工具清单（2026-10-18）；复现：任意会话查看自身工具列表 |
 | E-7 | dsh-tool-subagent README：委派工具调用 `ctx.subagents.startActivation()`；runtime 托管启动取消/执行/结果上报/清理；启动失败为工具错误结果，发布后失败经 completion notice 到达 | A | `node_modules/@deepseek-ai/dsh-tool-subagent/README.md` L96（2026-10-18） |
 | E-8 | dsh-subagent README：本包是委派共享契约 service；"Direct service callers continue to supply their own optional request depth"（service 级调用面官方确认）；`maxActiveSubagents` 默认 8（宿主并发预算）；驻留子会话再收发消息不重复占槽 | A | `node_modules/@deepseek-ai/dsh-subagent/README.md` L12/L49/L53（2026-10-18） |
-| E-9 | dsh-subagent lib 源码：`subagent/start`/`subagent/end` 生命周期事件经 ctx.events 发布（非 agent 调用方可订阅，`subagent/end` 携带结果）；`startActivation` 要求 exact live parent agent（否则 UNAUTHORIZED）；`request.outputSchema` 支持结构化结果契约；`sendMessage`/`interrupt`/`drainDescendants` service 方法齐全 | A | `node_modules/@deepseek-ai/dsh-subagent/lib/index.js` L154-200、L3036-3050、L879-905（2026-10-18） |
+| E-9 | dsh-subagent lib 源码（v0.5 修正）：`subagent/end` 载荷 = `{ runId, provider, id, local, stopReason, lastAssistantMessage? }`——**无 structured 字段**（结构化捕获在服务内部，`captureLocalResult` 不发布事件）；`startActivation` 要求 exact live parent agent（否则 UNAUTHORIZED）；`sendMessage(sender, targetId, content)` 签名确认 | A | `node_modules/@deepseek-ai/dsh-subagent/lib/index.js` L3036；`lib/types/lifecycle.js` L55-60；`lib/types/manager.js` L395（2026-10-19 复核） |
 | E-10 | 心跳单拍 spike 实测：100/500/1000/5000 任务图的单拍 P95 分别 ≈1.2/2.4/4.7/23.4ms（含 YAML 读图 + 就绪计算 + 事件追加）；一期规模（数百任务）单拍成本比任何合理节拍间隔（秒级）低约 3 个数量级 | B | 可复现：`node scripts/bench-heartbeat.mjs`（本仓库，2026-10-18，Apple  Silicon 本地 SSD） |
 
 ## 关键发现  serves: Q-1、Q-2、Q-3、Q-4
@@ -154,7 +154,7 @@ E-5（dsh-subagent-spawn-in-process 与 dsh-subagent-fork-in-process 包存在�
 | F-5 | schedule 坦承崩溃窗口可致重复投递——反过来证明我们 CAS 占位 + 世代凭据的必要性 | E-2 | 推断 | 中 |
 | F-6 | goal-round-driver 与 Taskmaster 语义不同（会话内续跑 vs 跨执行者派发），不能作先例；仅其 armed/disarmed 授权纪律可参考 | E-1 | 事实 | 高 |
 | F-7 | 宿主自带并发预算（maxActiveSubagents 默认 8）与驻留子会话消息机制——引擎并发上限是与宿主预算叠加而非替代；探活/打回有宿主消息通道支撑 | E-8 | 事实 | 高 |
-| F-8 | 结果回报对非 agent 调用方可达（subagent/start/end 生命周期事件订阅）；交卷可借 outputSchema 走结构化结果契约；新约束：spawn 需 exact live parent agent，属主不在场时降级 branch/排队 | E-9 | 事实 | 高 |
+| F-8 | 生命周期事件对非 agent 可达，但**只含结束信号**（stopReason/lastAssistantMessage），不含交卷证据；证据渠道唯一 = 执行者的 tm_node_update；spawn 需 exact live parent agent，属主不在场时降级 branch/排队 | E-9 | 事实 | 高 |
 | F-9 | 心跳单拍成本在一期规模（数百任务）下为个位数毫秒，5000 任务也仅 ~21ms——「单拍 < 节拍间隔」假设成立，且有约 3 个数量级余量 | E-10 | 事实（合成图实测） | 中 |
 
 ### 与直觉相反的地方
@@ -206,4 +206,4 @@ E-5（dsh-subagent-spawn-in-process 与 dsh-subagent-fork-in-process 包存在�
 - **实测脚本与原始数据**：E-6 复现方式见证据索引；包枚举命令 `ls node_modules/@deepseek-ai`（宿主 checkout，2026-10-18，307 个包）。
 - **相关文档**：[设计文档](../projects/PRJ-0002/design/taskmaster-design.md)（四风险表「可行性」行由本报告回填）、[交付计划](../projects/PRJ-0002/plan/taskmaster-plan.md)（风险行同步）、[PRD](../projects/PRJ-0002/prd/taskmaster-prd.md)。
 - **评审与复议记录**：随 S0 评审（2026-10-25）一并过。
-- **变更历史**：v0.1（2026-10-18）首版（有条件采纳，两个保留条件）；v0.1 修正（同日）：goal-round-driver 降为反面对照，Q-2 重写由 E-2 独立支撑；v0.2（同日）：E-7/E-8 闭合两个保留条件，D-1 升级为采纳，新增 F-7（宿主并发预算与驻留子会话消息机制），最危险假设更替为 completion notice 收取机制；v0.3（同日）：E-9 源码级闭合 completion notice（生命周期事件订阅），发现 spawn 需 exact live parent agent 约束并转化为 IF-8 设计约束，最危险假设更替为大图节拍耗时，信息缺口清零；v0.4（同日）：E-10 心跳 spike 实测闭合性能假设（5000 任务单拍 P95 ≈ 23ms），形态域假设全部闭合，实测脚本入库 `scripts/bench-heartbeat.mjs`。
+- **变更历史**：v0.1（2026-10-18）首版（有条件采纳，两个保留条件）；v0.1 修正（同日）：goal-round-driver 降为反面对照，Q-2 重写由 E-2 独立支撑；v0.2（同日）：E-7/E-8 闭合两个保留条件，D-1 升级为采纳，新增 F-7（宿主并发预算与驻留子会话消息机制），最危险假设更替为 completion notice 收取机制；v0.3（同日）：E-9 源码级闭合 completion notice（生命周期事件订阅），发现 spawn 需 exact live parent agent 约束并转化为 IF-8 设计约束，最危险假设更替为大图节拍耗时，信息缺口清零；v0.4（同日）：E-10 心跳 spike 实测闭合性能假设（5000 任务单拍 P95 ≈ 23ms），形态域假设全部闭合，实测脚本入库 `scripts/bench-heartbeat.mjs`；v0.5（2026-10-19）：宿主联调前源码复核修正 E-9/F-8——`subagent/end` 不含结构化结果，交卷证据只认 tm_node_update；Boot 补验收机制按「无机械证据可补」处置。

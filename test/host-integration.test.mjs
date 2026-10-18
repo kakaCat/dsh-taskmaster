@@ -89,10 +89,17 @@ test("宿主装配：工具注册 + 心跳 + spawn 派发 + subagent/end 收卷�
   assert.equal(v.inFlight[0].status, "running");
   const runId = v.inFlight[0].runId;
 
-  // ④ 执行者干完：宿主发 subagent/end（带结构化 evidence）→ 引擎收卷翻 done
-  ctx.emit("subagent/end", { local: true, id: "child-1", structured: { evidence: {} }, stopReason: "done" });
-  await new Promise((r) => setImmediate(r)); // 订阅是 async 的
-  v = (await tools.get("tm_status").execute({ graphId: gid })).view;
+  // ④ 执行者交卷：唯一证据渠道是 tm_node_update（真实契约：subagent/end 不带证据）
+  ctx.emit("subagent/end", { local: true, id: "child-1", stopReason: "completed", lastAssistantMessage: [] });
+  // end 事件只留痕不验收：任务仍 running
+  v = (await tools.get("tm_status").execute({ graphId: gid }, {})).view;
+  assert.ok(!v.counts.done); // undefined/0 都算未完成
+  const submit = await tools.get("tm_node_update").execute(
+    { graphId: gid, taskId: "t-1", runId, evidence: {} },
+    {},
+  );
+  assert.equal(submit.ok, true);
+  v = (await tools.get("tm_status").execute({ graphId: gid }, {})).view;
   assert.equal(v.counts.done, 1);
 
   // ⑤ 级联：下一拍出 t-2 的卡

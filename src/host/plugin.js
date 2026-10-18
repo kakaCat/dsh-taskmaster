@@ -8,6 +8,7 @@ import { boot } from "../engine/boot.js";
 import { TaskmasterTools } from "../tools/tools.js";
 import { makeChannels } from "./channels.js";
 import { makeAdapters } from "./adapters.js";
+import { EventLog } from "../persister/event-log.js";
 
 export const name = "taskmaster";
 export const inject = ["tools"];
@@ -36,9 +37,8 @@ export async function apply(ctx, config = {}) {
   const dataRoot = config.dataRoot ?? join(process.cwd(), ".dsh", "taskmaster");
   const defineTool = await resolveDefineTool(config);
 
-  // 活性计数器 + end 结果缓存（Boot 补验收与运行时收卷共用）
+  // 活性计数器（探活信号：subagent 生命周期事件驱动）
   const activityCounters = new Map();
-  const endResults = new Map(); // sessionId → { structured, stopReason, at }
 
   const agents = () => ctx.get?.("agents");
   const ownerAgentFor = (graphId, engine) => {
@@ -55,7 +55,8 @@ export async function apply(ctx, config = {}) {
   Object.assign(channels, makeChannels({ subagents: ctx.subagents, get: ctx.get?.bind(ctx) }, (gid) => ownerAgentFor(gid, engine)));
 
   const adapters = makeAdapters({ get: ctx.get?.bind(ctx) }, activityCounters);
-  adapters.fetchResult = (binding) => endResults.get(binding.sessionId) ?? null;
+  // fetchResult 保持 null：subagent/end 不带证据，停机期间完成的结果无法机械补验收——
+  // Boot 第④步按 processAlive 走「活着重挂 / 死了标 stalled」，不猜证据。
 
   engine = await boot(dataRoot, {
     channels,
@@ -87,22 +88,23 @@ export async function apply(ctx, config = {}) {
     ctx.on("dispose", () => clearInterval(timer));
   }
 
-  // 事件订阅：子会话结束 = 收卷时机；生命周期与消息事件 = 活性心跳
-  const onEnd = async (info) => {
-    const sessionId = String(info.id ?? info.childId ?? "");
+  // 事件订阅（真实载荷已核准：subagent/end = { runId, provider, id, local, stopReason, lastAssistantMessage? }，
+  // **没有 structured**——结构化捕获在服务内部，不经事件）。
+  // 因此：交卷证据只认执行者的 tm_node_update；subagent/end 只是「执行者结束」信号。
+  const onEnd = (info) => {
+    const sessionId = String(info.id ?? "");
     if (!sessionId) return;
     activityCounters.set(sessionId, (activityCounters.get(sessionId) ?? 0) + 1);
-    endResults.set(sessionId, { structured: info.structured ?? null, stopReason: info.stopReason, at: new Date().toISOString() });
     const binding = engine.binder.bySession(sessionId);
     if (!binding) return; // 不是我们的执行者
-    const evidence = info.structured?.evidence ?? {};
-    // 交卷：世代与 checks 由 acceptor 裁决；补不上/被打回都留痕，下一拍对账兜底
-    const graph = engine.store.get(binding.graphId, binding.graphVersion);
-    await engine.acceptor
-      .submit({ graphId: binding.graphId, graph, taskId: binding.taskId, runId: binding.runId, evidence })
-      .catch(() => {}); // 拒收/打回走事件留痕，不在订阅里炸
+    // 结束 ≠ 交卷：只留痕，不伪造证据。未交卷的 ended 由下一拍对账按异常路径上报（只报不修）。
+    EventLog.open(join(dataRoot, "events", `${binding.graphId}.events.ndjson`)).append("executor-ended", {
+      taskId: binding.taskId,
+      runId: binding.runId,
+      stopReason: info.stopReason,
+    });
   };
-  ctx.on("subagent/end", (info) => void onEnd(info));
+  ctx.on("subagent/end", onEnd);
   ctx.on("subagent/start", (info) => {
     const sessionId = String(info.id ?? "");
     if (sessionId) activityCounters.set(sessionId, (activityCounters.get(sessionId) ?? 0) + 1);
