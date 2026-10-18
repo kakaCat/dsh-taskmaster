@@ -11,7 +11,7 @@ function scratch() {
   return mkdtempSync(join(tmpdir(), "tm-graph-"));
 }
 
-const validGraph = () => ({
+const validGraph = (): any => ({
   apiVersion: "taskmaster/v1",
   tasks: [
     { id: "t-1", statement: "建表", deps: [], checks: ["表结构落库"], writeScopes: ["db/"], roundBudget: 10 },
@@ -26,13 +26,13 @@ test("AC-1.1：注册 3 任务图 → v1 落盘 + meta active", () => {
   assert.equal(r.version, 1);
   assert.ok(r.graphId.startsWith("g-"));
   const meta = store.meta(r.graphId);
-  assert.equal(meta.activeVersion, 1);
-  assert.equal(meta.lifecycle, "active");
+  assert.equal(meta!.activeVersion, 1);
+  assert.equal(meta!.lifecycle, "active");
   assert.equal((store.get(r.graphId) as any).tasks.length, 3);
   // register 事件留痕
   const events = store.eventLog(r.graphId).readAll();
-  assert.equal(events.at(-1).kind, "register");
-  assert.equal(events.at(-1).tasks, 3);
+  assert.equal(events.at(-1)!.kind, "register");
+  assert.equal(events.at(-1)!.tasks, 3);
 });
 
 test("AC-1.2：改图 = 新版本；旧版本可回读", () => {

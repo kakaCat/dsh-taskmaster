@@ -44,7 +44,7 @@ function mockHost(dir) {
   return { ctx, tools, agents, state };
 }
 
-const graph = () => ({
+const graph = (): any => ({
   apiVersion: "taskmaster/v1",
   tasks: [
     { id: "t-1", statement: "建表", deps: [], checks: [{ text: "表落库", verify: "mechanical", command: "exit 0" }] },

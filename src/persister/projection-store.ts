@@ -14,7 +14,7 @@ export class WriteConflictError extends Error {
 }
 
 /** @returns {{ version: number, data: any }} 文件不存在时 version=0, data=null */
-export function readProjection(path) {
+export function readProjection<T = any>(path: string): { version: number; data: T | null } {
   if (!existsSync(path)) return { version: 0, data: null };
   const envelope = JSON.parse(readFileSync(path, "utf8"));
   return { version: envelope.version ?? 0, data: envelope.data ?? null };
@@ -24,7 +24,7 @@ export function readProjection(path) {
  * CAS 写：当前版本必须等于 expectedVersion，否则 WriteConflictError。
  * @returns 写入后的新版本号
  */
-export function casWriteProjection(path, expectedVersion, data) {
+export function casWriteProjection<T = any>(path: string, expectedVersion: number, data: T): number {
   const current = readProjection(path).version;
   if (current !== expectedVersion) throw new WriteConflictError(path, expectedVersion, current);
   const next = current + 1;

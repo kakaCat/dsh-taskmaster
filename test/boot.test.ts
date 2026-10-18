@@ -20,7 +20,7 @@ function enableConfig(dir, extra = {}) {
   writeFileSync(join(dir, "config.yaml"), `enabled: true\n${Object.entries(extra).map(([k, v]) => `${k}: ${v}`).join("\n")}`);
 }
 
-const graph = () => ({
+const graph = (): any => ({
   apiVersion: "taskmaster/v1",
   tasks: [
     { id: "t-1", statement: "建表", deps: [], checks: [{ text: "c", verify: "mechanical", command: "exit 0" }] },

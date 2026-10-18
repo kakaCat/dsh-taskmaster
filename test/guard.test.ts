@@ -16,7 +16,7 @@ function scratch() {
   return mkdtempSync(join(tmpdir(), "tm-guard-"));
 }
 
-const graph = () => ({
+const graph = (): any => ({
   apiVersion: "taskmaster/v1",
   tasks: [{ id: "t-1", statement: "建表", deps: [], checks: ["x"] }],
 });
@@ -58,7 +58,7 @@ test("运行中改配置：关开关下一拍生效，开回来再下一拍恢�
   writeFileSync(join(dir, "config.yaml"), "enabled: true");
   const s3 = await reconciler.reconcileGraph(graphId);
   assert.deepEqual(s3.actions, []); // 卡已出过（pending），等确认，无新动作
-  assert.equal(gate.current(graphId).state, "pending");
+  assert.equal(gate.current(graphId)!.state, "pending");
 });
 
 test("降级：全通道挂 → 标 degraded；下一拍只出卡不派送（纯对话流）", async () => {
@@ -71,7 +71,7 @@ test("降级：全通道挂 → 标 degraded；下一拍只出卡不派送（纯
   });
   // 第一拍：出卡（pending，无人确认就不派送——降级发生在 confirmed/auto 路径）
   await reconciler.reconcileGraph(graphId);
-  const card = gate.current(graphId);
+  const card = gate.current(graphId)!;
   // 人确认 → 下一拍补投递 → 全通道挂 → delivery-failed + degraded
   gate.confirm(graphId, card.planId, card.readyHash);
   const s2 = await reconciler.reconcileGraph(graphId);

@@ -31,7 +31,7 @@ test("出卡 → pending；不确认就没有批次（AC-4.1 的闸侧）", () =
   assert.equal(r.card.state, "pending");
   assert.equal(r.autoConfirmed, false);
   // 未确认前，confirm 之外的任何路径拿不到批次（没有 confirm 就没有返回值里的 batch）
-  assert.equal(gate.current("g-1").state, "pending");
+  assert.equal(gate.current("g-1")!.state, "pending");
   // 确认后才有批次
   const batch = gate.confirm("g-1", r.card.planId, hashNow);
   assert.deepEqual(batch.map((b) => b.taskId), ["t-1"]);
@@ -75,7 +75,7 @@ test("驳回：任务保持 ready；同批不再自动出卡；就绪集变化�
   const { offer } = offerArgs(gate);
   const r1 = gate.offer(offer);
   gate.reject("g-1", r1.card.planId, { reason: "先别派" });
-  assert.equal(gate.current("g-1").state, "rejected");
+  assert.equal(gate.current("g-1")!.state, "rejected");
   // 同批再 offer → 被驳回记忆压制
   const r2 = gate.offer(offer);
   assert.equal(r2.isNew, false);
@@ -118,6 +118,6 @@ test("持久化：换实例后卡状态可读回", () => {
   const { offer } = offerArgs(gate);
   const r = gate.offer(offer);
   const gate2 = new Gate(dir);
-  assert.equal(gate2.current("g-1").planId, r.card.planId);
-  assert.equal(gate2.current("g-1").state, "pending");
+  assert.equal(gate2.current("g-1")!.planId, r.card.planId);
+  assert.equal(gate2.current("g-1")!.state, "pending");
 });

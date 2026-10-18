@@ -18,10 +18,10 @@ test("建绑定：四元组 + sessionId + runId 世代齐全并落盘", () => {
   const binding = b.open(spec);
   assert.equal(binding.state, "active");
   assert.ok(binding.runId.startsWith("r-"));
-  assert.equal(b.byTask("t-1").sessionId, "s-1");
+  assert.equal((b.byTask("t-1") as any).sessionId, "s-1");
   // 重开进程视角：同目录从盘上读回
   const reopened = new Binder(dir);
-  assert.equal(reopened.byTask("t-1").runId, binding.runId);
+  assert.equal((reopened.byTask("t-1") as any).runId, binding.runId);
 });
 
 test("不变量①：任务同时刻最多一条活跃绑定", () => {
@@ -52,7 +52,7 @@ test("终态关绑定：台账清空、任务可再派", () => {
   const b = new Binder(scratch());
   b.open(spec);
   const closed = b.close("t-1", { outcome: "done" });
-  assert.equal(closed.state, "closed");
+  assert.equal((closed as any).state, "closed");
   assert.equal(b.byTask("t-1"), null);
   assert.equal(b.active().length, 0);
   // 关绑定后同一任务/同一会话都可再绑
@@ -65,7 +65,7 @@ test("持久化：bindings.json 可跨实例读回；损坏时从空台账起步
   const b = new Binder(dir);
   b.open(spec);
   const reopened = new Binder(dir);
-  assert.equal(reopened.byTask("t-1").sessionId, "s-1");
+  assert.equal(reopened.byTask("t-1")!.sessionId, "s-1");
   // 损坏：写入坏 JSON → 不炸，从空起步
   writeFileSync(join(dir, "bindings.json"), "{oops");
   const degraded = new Binder(dir);
@@ -77,7 +77,7 @@ test("寻址查询面：byTask / bySession / byGraph", () => {
   b.open(spec);
   b.open({ ...spec, taskId: "t-2", sessionId: "s-2" });
   b.open({ ...spec, graphId: "g-2", taskId: "t-9", sessionId: "s-9" });
-  assert.equal(b.bySession("s-2").taskId, "t-2");
+  assert.equal(b.bySession("s-2")!.taskId, "t-2");
   assert.equal(b.byGraph("g-1").length, 2);
   assert.equal(b.byGraph("g-2").length, 1);
 });
@@ -87,5 +87,5 @@ test("探活游标：touchEventSeq 只进不退", () => {
   b.open(spec);
   b.touchEventSeq("t-1", 5);
   b.touchEventSeq("t-1", 3); // 回退忽略
-  assert.equal(b.byTask("t-1").lastEventSeq, 5);
+  assert.equal((b.byTask("t-1") as any).lastEventSeq, 5);
 });

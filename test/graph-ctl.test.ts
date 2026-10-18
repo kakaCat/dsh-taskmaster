@@ -12,7 +12,7 @@ function scratch() {
   return mkdtempSync(join(tmpdir(), "tm-ctl-"));
 }
 
-const graph = () => ({
+const graph = (): any => ({
   apiVersion: "taskmaster/v1",
   tasks: [{ id: "t-1", statement: "建表", deps: [], checks: ["x"] }],
 });
@@ -33,7 +33,7 @@ test("暂停/恢复：active ⇄ paused，actor 落事件留痕", () => {
   ctl.resume(graphId, { actor: "owner-window-1" });
   assert.equal(store.meta(graphId).lifecycle, "active");
   const events = store.eventLog(graphId).readAll();
-  assert.equal(events.find((e) => e.kind === "graph-paused").actor, "owner-window-1");
+  assert.equal(events.find((e) => e.kind === "graph-paused")!.actor, "owner-window-1");
 });
 
 test("停止：active/paused → stopping；非法迁移（asleep→active）被拒", () => {

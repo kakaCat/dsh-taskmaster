@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { atomicWriteFileSync } from "../persister/atomic-write.ts";
+import type { BindingRecord } from "../types.ts";
 
 export class BindingConflictError extends Error {
   code: string;
@@ -28,7 +29,7 @@ export class StaleRunError extends Error {
 
 export class Binder {
   path: string;
-  bindings: any[];
+  bindings: BindingRecord[];
   /** @param dataRoot 数据根 */
   constructor(dataRoot) {
     this.path = join(dataRoot, "bindings.json");
@@ -69,18 +70,18 @@ export class Binder {
    * 预留绑定：先签发 runId 世代（任务包必须携带世代凭据，FR-10），sessionId 投递成功后补挂。
    * 不变量①在此强制；不变量②在 attachSession 强制。
    */
-  reserve({ graphId, graphVersion, taskId, channel }: any, now: any = new Date()) {
+  reserve({ graphId, graphVersion, taskId, channel }: Pick<BindingRecord, "graphId" | "graphVersion" | "taskId"> & { channel?: string | null }, now: Date = new Date()): BindingRecord {
     const onTask = this.byTask(taskId);
     if (onTask) {
       throw new BindingConflictError("任务已有活跃绑定", `task=${taskId} run=${onTask.runId}`);
     }
-    const binding = {
+    const binding: BindingRecord = {
       graphId,
       graphVersion,
       taskId,
       runId: `r-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
       sessionId: null,
-      channel,
+      channel: channel ?? null,
       state: "active",
       dispatchedAt: now.toISOString(),
       startedAt: now.toISOString(),
@@ -92,7 +93,7 @@ export class Binder {
   }
 
   /** 投递成功后补挂会话与通道；同一 sessionId 不出现在两条活跃绑定（不变量②） */
-  attachSession(taskId, runId, sessionId, channel = null) {
+  attachSession(taskId: string, runId: string, sessionId: string, channel: string | null = null): BindingRecord {
     const b = this.byTask(taskId);
     if (!b || b.runId !== runId) throw new BindingConflictError("预留绑定不存在或世代不符", `task=${taskId} run=${runId}`);
     const onSession = this.bySession(sessionId);
@@ -106,7 +107,7 @@ export class Binder {
   }
 
   /** 投递失败回收预留（不自动重试的台账侧） */
-  drop(taskId, runId) {
+  drop(taskId: string, runId: string): void {
     const b = this.byTask(taskId);
     if (b && b.runId === runId) {
       this.bindings = this.bindings.filter((x) => x !== b);
@@ -115,7 +116,7 @@ export class Binder {
   }
 
   /** 投递成功建绑定（= reserve + attachSession 的便捷组合，测试与同步路径用） */
-  open({ graphId, graphVersion, taskId, sessionId, channel }, now = new Date()) {
+  open({ graphId, graphVersion, taskId, sessionId, channel }: { graphId: string; graphVersion: number; taskId: string; sessionId: string; channel?: string | null }, now: Date = new Date()): BindingRecord {
     const b = this.reserve({ graphId, graphVersion, taskId, channel }, now);
     return this.attachSession(taskId, b.runId, sessionId);
   }
@@ -125,7 +126,7 @@ export class Binder {
   }
 
   /** 任务终态关绑定（留痕在 events/runs，台账条目移除） */
-  close(taskId: any, { outcome }: any = {}) {
+  close(taskId: string, { outcome }: { outcome?: string | null } = {}): BindingRecord | null {
     const b = this.byTask(taskId);
     if (!b) return null;
     b.state = "closed";
@@ -140,7 +141,7 @@ export class Binder {
    * 世代校验：交卷/探活回报必须持当前世代 runId。
    * @returns 当前绑定；世代不符抛 stale-run，无绑定抛 binding-conflict
    */
-  assertCurrent(taskId, runId) {
+  assertCurrent(taskId: string, runId: string): BindingRecord {
     const b = this.byTask(taskId);
     if (!b) throw new BindingConflictError("任务无活跃绑定", `task=${taskId}`);
     if (b.runId !== runId) throw new StaleRunError(taskId, runId);
@@ -148,7 +149,7 @@ export class Binder {
   }
 
   /** 探活游标：记录该绑定看到的最后事件 seq */
-  touchEventSeq(taskId, seq) {
+  touchEventSeq(taskId: string, seq: number): void {
     const b = this.byTask(taskId);
     if (b && seq > b.lastEventSeq) {
       b.lastEventSeq = seq;
@@ -157,7 +158,7 @@ export class Binder {
   }
 
   /** 监控元数据：活性投影与最后活动时间（投影，不进主状态机；由 monitor 写入） */
-  markLiveness(taskId: any, { liveness, lastActivityAt }: any = {}) {
+  markLiveness(taskId: string, { liveness, lastActivityAt }: { liveness?: BindingRecord["liveness"]; lastActivityAt?: string } = {}): void {
     const b = this.byTask(taskId);
     if (!b) return;
     if (liveness !== undefined) b.liveness = liveness;
@@ -166,7 +167,7 @@ export class Binder {
   }
 
   /** 人裁重派：关闭旧绑定（若有），由调用方随后 open 新绑定（新 runId 自然成为新世代） */
-  supersede(taskId: any, { reason }: any = {}) {
+  supersede(taskId: string, { reason }: { reason?: string } = {}): BindingRecord | null {
     return this.close(taskId, { outcome: `superseded: ${reason ?? "人裁"}` });
   }
 }

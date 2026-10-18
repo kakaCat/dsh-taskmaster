@@ -1,3 +1,5 @@
+import type { EventRecord } from "../types.ts";
+
 // 事件流：append-only NDJSON，seq 单调递增。
 // 纪律见设计文档数据模型节：事件流是事实源之一；seq 同时是探活的"留痕心跳"信号。
 
@@ -41,9 +43,9 @@ export class EventLog {
    * 若上次崩溃留下截断尾行，先补换行隔离坏行，保证新事件完整可读。
    * @returns 写入的事件（含分配的 seq）
    */
-  append(kind, fields = {}, now = new Date()) {
+  append(kind: string, fields: Record<string, unknown> = {}, now: Date = new Date()): EventRecord {
     mkdirSync(dirname(this.path), { recursive: true });
-    const event = { seq: this.lastSeq + 1, ts: now.toISOString(), kind, ...fields };
+    const event: EventRecord = { seq: this.lastSeq + 1, ts: now.toISOString(), kind, ...fields };
     appendFileSync(this.path, (this.tornTail ? "\n" : "") + JSON.stringify(event) + "\n");
     this.tornTail = false;
     this.lastSeq = event.seq;
@@ -51,7 +53,7 @@ export class EventLog {
   }
 
   /** 全量读回（崩溃重建用；只追加不回改，所以读到的即历史全集）。尾部坏行（崩溃截断）跳过并计数。 */
-  readAll() {
+  readAll(): EventRecord[] {
     if (!existsSync(this.path)) return [];
     const events: any[] = [];
     let torn = 0;

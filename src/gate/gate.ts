@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "../persister/atomic-write.ts";
 import { EventLog } from "../persister/event-log.ts";
+import type { PlanCard, Task } from "../types.ts";
 
 export class PlanStaleError extends Error {
   code: string;
@@ -29,7 +30,7 @@ export class PlanNotPendingError extends Error {
 }
 
 /** 就绪集哈希：图版本 + 就绪任务集 + 本批 + 并发上限——任一变化旧卡即失效 */
-export function readyHashOf({ graphVersion, readyIds, batchIds, concurrency }: any) {
+export function readyHashOf({ graphVersion, readyIds, batchIds, concurrency }: { graphVersion: number; readyIds: string[]; batchIds: string[]; concurrency: number }): string {
   const payload = JSON.stringify({
     v: graphVersion,
     ready: [...readyIds].sort(),
@@ -40,7 +41,7 @@ export function readyHashOf({ graphVersion, readyIds, batchIds, concurrency }: a
 }
 
 /** 写域冲突检测（S1 只展示不裁决）：前缀相交即冲突 */
-export function writeScopeConflicts(readyTasks) {
+export function writeScopeConflicts(readyTasks: Task[]): Array<{ tasks: string[]; scopes: string[] }> {
   const conflicts: any[] = [];
   const overlap = (a, b) => a.startsWith(b) || b.startsWith(a);
   for (let i = 0; i < readyTasks.length; i++) {
@@ -83,7 +84,7 @@ export class Gate {
   }
 
   /** 当前计划卡（含 rejected/superseded 态，供视图查询） */
-  current(graphId) {
+  current(graphId: string): PlanCard | null {
     return this.#load(graphId)?.card ?? null;
   }
 
@@ -93,7 +94,7 @@ export class Gate {
    * @param ready 全部就绪任务（卡上展示冲突用）
    * @returns {{ card, isNew, autoConfirmed }}
    */
-  offer({ graphId, graphVersion, ready, batch, concurrency = 1, autoFacets = [] }: any, now: any = new Date()) {
+  offer({ graphId, graphVersion, ready, batch, concurrency = 1, autoFacets = [] }: { graphId: string; graphVersion: number; ready: Task[]; batch: Task[]; concurrency?: number; autoFacets?: string[] }, now: Date = new Date()) {
     const hash = readyHashOf({
       graphVersion,
       readyIds: ready.map((t) => t.id),
@@ -119,7 +120,7 @@ export class Gate {
       this.#eventLog(graphId).append("plan-superseded", { planId: record.card.planId });
     }
 
-    const card: any = {
+    const card: PlanCard = {
       planId: `p-${Date.now().toString(36)}-${createHash("sha1").update(hash).digest("hex").slice(2, 8)}`,
       graphId,
       graphVersion,
@@ -133,7 +134,7 @@ export class Gate {
     };
 
     // gate=auto 切面：整批都在 auto 里程碑内 → 免确认
-    const auto = batch.length > 0 && batch.every((t) => autoFacets.includes(t.milestone));
+    const auto = batch.length > 0 && batch.every((t) => autoFacets.includes(t.milestone ?? ""));
     if (auto) {
       card.state = "confirmed";
       card.confirmedAt = now.toISOString();
@@ -173,7 +174,7 @@ export class Gate {
   }
 
   /** 驳回：任务保持 ready；记住驳回哈希，同批不再自动出卡 */
-  reject(graphId: any, planId: any, { reason }: any = {}, now: any = new Date()) {
+  reject(graphId: string, planId: string, { reason }: { reason?: string } = {}, now: Date = new Date()) {
     const record = this.#load(graphId);
     const card = this.#expectCard(record, planId);
     if (card.state !== "pending") throw new PlanNotPendingError(planId, card.state);

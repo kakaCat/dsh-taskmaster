@@ -10,6 +10,7 @@ import { atomicWriteFileSync } from "../persister/atomic-write.ts";
 import { readProjection, casWriteProjection } from "../persister/projection-store.ts";
 import { EventLog } from "../persister/event-log.ts";
 import { assertValidGraph } from "./validate.ts";
+import type { Graph, GraphMeta } from "../types.ts";
 
 export class GraphNotFoundError extends Error {
   code: string;
@@ -64,24 +65,25 @@ export class GraphStore {
    * @param graph 图对象（先经 assertValidGraph）
    * @returns {{ graphId, version }}
    */
-  upsert(graph: any, { graphId, ownerSessionId }: any = {}) {
+  upsert(graph: Graph, { graphId, ownerSessionId }: { graphId?: string; ownerSessionId?: string | null } = {}): { graphId: string; version: number } {
     assertValidGraph(graph);
     const isCreate = graphId === undefined;
     // 新建：生成唯一 id（时间戳 + 随机后缀；同毫秒批量创建也不撞）
-    let gid = graphId;
+    let gid: string | undefined = graphId;
     if (isCreate) {
       for (let attempt = 0; attempt < 3; attempt++) {
         gid = `g-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
         if (!existsSync(this.metaPath(gid))) break;
-        gid = null;
+        gid = undefined;
       }
-      if (gid === null) {
+      if (gid === undefined) {
         const e: any = new Error("graph id allocation conflict after 3 attempts");
         e.code = "write-conflict";
         throw e;
       }
     }
-    const metaPath = this.metaPath(gid);
+    const finalGid: string = gid as string;
+    const metaPath = this.metaPath(finalGid);
     const current = readProjection(metaPath);
     if (!isCreate && current.data === null) throw new GraphNotFoundError(gid);
 
@@ -98,28 +100,28 @@ export class GraphStore {
     };
     casWriteProjection(metaPath, current.version, meta);
     // ③ 事件留痕
-    this.eventLog(gid).append("register", { graphId: gid, version: nextVersion, tasks: graph.tasks.length });
-    return { graphId: gid, version: nextVersion };
+    this.eventLog(finalGid).append("register", { graphId: finalGid, version: nextVersion, tasks: graph.tasks.length });
+    return { graphId: finalGid, version: nextVersion };
   }
 
   /** 读图：version 缺省 = 活跃版本；不存在抛 graph-not-found */
-  get(graphId: any, version?: any): any {
+  get(graphId: string, version?: number): Graph {
     const meta = this.meta(graphId);
     const v = version ?? meta.activeVersion;
     const p = join(this.graphDir(graphId), `v${v}.yaml`);
     if (!existsSync(p)) throw new GraphNotFoundError(`${graphId}@v${v}`);
-    return yaml.load(readFileSync(p, "utf8"));
+    return yaml.load(readFileSync(p, "utf8")) as Graph;
   }
 
   /** 读图元数据（活跃版本 + 生命周期态） */
-  meta(graphId) {
+  meta(graphId: string): GraphMeta {
     const { data } = readProjection(this.metaPath(graphId));
     if (data === null) throw new GraphNotFoundError(graphId);
     return data;
   }
 
   /** 列出版本号（只增不删 = 全量可回读） */
-  listVersions(graphId) {
+  listVersions(graphId: string): number[] {
     const dir = this.graphDir(graphId);
     if (!existsSync(dir)) throw new GraphNotFoundError(graphId);
     return readdirSync(dir)
@@ -129,7 +131,7 @@ export class GraphStore {
   }
 
   /** 列出全部已注册图 id */
-  list() {
+  list(): string[] {
     const dir = join(this.dataRoot, "graphs");
     if (!existsSync(dir)) return [];
     return readdirSync(dir, { withFileTypes: true })

@@ -44,8 +44,8 @@ test("AC-8.1：注册图后零工具调用，一拍内自动出计划卡", async
   const { reconciler, gate, graphId } = setup();
   const s = await reconciler.reconcileGraph(graphId);
   assert.ok(s.actions.some((a) => a.startsWith("plan-offered")));
-  assert.equal(gate.current(graphId).state, "pending");
-  assert.equal(gate.current(graphId).batch[0].taskId, "t-1");
+  assert.equal(gate.current(graphId)!.state, "pending");
+  assert.equal(gate.current(graphId)!.batch[0].taskId, "t-1");
   // 下一拍：卡在等人，不重复出卡不派发
   const s2 = await reconciler.reconcileGraph(graphId);
   assert.equal(s2.actions.length, 0);
@@ -54,7 +54,7 @@ test("AC-8.1：注册图后零工具调用，一拍内自动出计划卡", async
 test("确认后下一拍自动补投递：confirmed → delivered → running + 绑定", async () => {
   const { dir, reconciler, gate, graphId } = setup({ channels: { spawn: okSpawn() } });
   await reconciler.reconcileGraph(graphId);
-  const card = gate.current(graphId);
+  const card = gate.current(graphId)!;
   gate.confirm(graphId, card.planId, card.readyHash);
   // 模拟：confirm 与投递之间崩溃（什么都没发生），下一拍对账补上
   const s = await reconciler.reconcileGraph(graphId);

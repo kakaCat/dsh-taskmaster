@@ -30,7 +30,7 @@ test("alive：事件 seq 增长 → alive，游标推进", () => {
   const m = new Monitor(dir, { binder: new Binder(dir), adapters: { activityOf: () => 5 } });
   const r = m.sweep("g-1", at(10_000));
   assert.equal(r[0].liveness, "alive");
-  assert.equal(new Binder(dir).byTask("t-1").lastEventSeq, 5);
+  assert.equal((new Binder(dir).byTask("t-1") as any).lastEventSeq, 5);
 });
 
 test("silent：无增长但未超 TTL → silent，不上报", () => {
@@ -84,11 +84,11 @@ test("活性可恢复：stalled 后信号恢复增长 → 回 alive（上报留�
   let seq = 0;
   const m = new Monitor(dir, { binder: new Binder(dir), adapters: { activityOf: () => seq }, silentMs: 1000 });
   m.sweep("g-1", at(120_000));
-  assert.equal(new Binder(dir).byTask("t-1").liveness, "stalled");
+  assert.equal((new Binder(dir).byTask("t-1") as any).liveness, "stalled");
   seq = 9; // 执行者活过来了
   const r = m.sweep("g-1", at(130_000));
   assert.equal(r[0].liveness, "alive");
-  assert.equal(new Binder(dir).byTask("t-1").lastEventSeq, 9);
+  assert.equal((new Binder(dir).byTask("t-1") as any).lastEventSeq, 9);
 });
 
 test("持久化：活性元数据跨实例读回（Boot 重挂的输入）", () => {
@@ -97,5 +97,5 @@ test("持久化：活性元数据跨实例读回（Boot 重挂的输入）", () 
   const m = new Monitor(dir, { binder: new Binder(dir), adapters: { activityOf: () => 0 }, silentMs: 1000 });
   m.sweep("g-1", at(120_000));
   const reopened = new Binder(dir);
-  assert.equal(reopened.byTask("t-1").liveness, "stalled");
+  assert.equal(reopened.byTask("t-1")!.liveness, "stalled");
 });

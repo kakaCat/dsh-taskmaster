@@ -14,7 +14,7 @@ function scratch() {
   return mkdtempSync(join(tmpdir(), "tm-status-"));
 }
 
-const graph = () => ({
+const graph = (): any => ({
   apiVersion: "taskmaster/v1",
   tasks: [
     { id: "t-1", statement: "建表", deps: [], checks: ["x"], kind: "db", story: "s-1", milestone: "m1" },
@@ -93,7 +93,7 @@ test("总览（无 graphId）：多图列出生命周期与计数；空数据根
 
 test("计划卡状态进视图；不存在的任务给 notice 不炸", () => {
   const { gate, st, graphId } = setup();
-  const t1 = { id: "t-1", statement: "建表", milestone: undefined };
+  const t1: any = { id: "t-1", statement: "建表", checks: ["x"], milestone: undefined };
   gate.offer({ graphId, graphVersion: 1, ready: [t1], batch: [t1], concurrency: 1 });
   const v = st.status({ graphId });
   assert.equal(v.plan.state, "pending");

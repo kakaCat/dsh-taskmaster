@@ -40,7 +40,7 @@ test("AC-2.1：前驱未 done，后继不在就绪集——任何状态下都不
 
 test("「在等谁」：等待中的任务列出未 done 的前驱", () => {
   const r = computeReady(chainGraph, {});
-  const w = r.waiting.find((w) => w.task.id === "t-3");
+  const w = r.waiting.find((w) => w.task.id === "t-3")!;
   assert.deepEqual(w.pendingDeps, ["t-2"]);
 });
 
@@ -69,7 +69,7 @@ test("死锁嗅探：就绪空 + 没在途 + 有等待 = 死锁；blocked 算在
 
   // 真死锁：无环图在正常状态下不可达，但改图（upsert 新版本）中途换图可造出
   // 「就绪空 + 在途空 + 有等待」——谓词本身用合成投影直接验证
-  assert.equal(isDeadlocked({ ready: [], inFlight: [], waiting: [{ task: { id: "x" }, pendingDeps: ["ghost"] }] }), true);
+  assert.equal(isDeadlocked({ ready: [], inFlight: [], waiting: [{ task: { id: "x", statement: "x", checks: ["c"] }, pendingDeps: ["ghost"] }] }), true);
 
   // 图完成判定
   assert.equal(isComplete(chainGraph, { "t-1": { status: "done" }, "t-2": { status: "done" }, "t-3": { status: "done" } }), true);
