@@ -125,6 +125,15 @@ export class Binder {
     }
   }
 
+  /** 监控元数据：活性投影与最后活动时间（投影，不进主状态机；由 monitor 写入） */
+  markLiveness(taskId, { liveness, lastActivityAt }) {
+    const b = this.byTask(taskId);
+    if (!b) return;
+    if (liveness !== undefined) b.liveness = liveness;
+    if (lastActivityAt !== undefined) b.lastActivityAt = lastActivityAt;
+    this.#persist();
+  }
+
   /** 人裁重派：关闭旧绑定（若有），由调用方随后 open 新绑定（新 runId 自然成为新世代） */
   supersede(taskId, { reason } = {}) {
     return this.close(taskId, { outcome: `superseded: ${reason ?? "人裁"}` });
