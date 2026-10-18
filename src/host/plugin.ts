@@ -55,6 +55,15 @@ export async function apply(ctx, config: any = {}) {
   Object.assign(channels, makeChannels({ subagents: ctx.subagents, get: ctx.get?.bind(ctx) }, (gid) => ownerAgentFor(gid, engine)));
 
   const adapters = makeAdapters({ get: ctx.get?.bind(ctx) }, activityCounters);
+  // 主动探活（S2 #16）：经宿主 sendMessage 向驻留子会话投一条 ping（sender = 属主 agent）；
+  // 子会话回消息会 bump activityCounters，下一拍 sweep 自然看到"活过来"。
+  adapters.probe = async (sessionId: string) => {
+    const binding = engine.binder.bySession(sessionId);
+    const parent = binding ? ownerAgentFor(binding.graphId, engine) : null;
+    if (parent && ctx.subagents?.sendMessage) {
+      await ctx.subagents.sendMessage(parent, sessionId, "Taskmaster 探活：请回一条进展（任意内容即可）");
+    }
+  };
   // fetchResult 保持 null：subagent/end 不带证据，停机期间完成的结果无法机械补验收——
   // Boot 第④步按 processAlive 走「活着重挂 / 死了标 stalled」，不猜证据。
 

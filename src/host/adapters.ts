@@ -1,11 +1,18 @@
 // 宿主信号适配器（FR-7 探活 + FR-15 重挂的真接法）。
 // 纪律：拿不到的信号就诚实返回 null/false 语义——monitor 对 null 不当作增长。
 
+export interface HostAdapters {
+  activityOf(sessionId: string): number | null;
+  processAlive(sessionId: string): boolean;
+  fetchResult: ((binding: any) => any) | null;
+  probe?: (sessionId: string) => Promise<void>;
+}
+
 /**
  * @param ctx 宿主插件上下文
  * @param activityCounters Map<sessionId, number>（插件里由事件订阅维护的活性计数器）
  */
-export function makeAdapters(ctx, activityCounters) {
+export function makeAdapters(ctx: any, activityCounters: Map<string, number>): HostAdapters {
   const agents = () => ctx.get?.("agents");
   return {
     // 留痕心跳：订阅侧计数（subagent 生命周期 + 子会话消息事件都会 bump）
