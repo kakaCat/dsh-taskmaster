@@ -6,6 +6,7 @@
 import { join } from "node:path";
 import { homedir } from "node:os";
 import z from "@deepseek-ai/schemastery";
+import { defineTool } from "@deepseek-ai/dsh-tools";
 import { boot } from "../engine/boot.ts";
 import { TaskmasterTools } from "../tools/tools.ts";
 import { makeChannels } from "./channels.ts";
@@ -27,23 +28,11 @@ function resolveDataRoot(configured?: string): string {
   return join(home, "storages", "dsh-taskmaster");
 }
 
-/**
- * defineTool 解析：宿主挂着 @deepseek-ai/dsh-tools 就用真的（schema 校验/输出规范化），
- * 离线单测环境没有该包则退化为最小规范化——工具语义由 tmp 模块自身保证，不依赖宿主 schema。
- */
-async function resolveDefineTool(config) {
-  if (config.defineTool) return config.defineTool;
-  try {
-    const mod = await import("@deepseek-ai/dsh-tools");
-    return mod.defineTool;
-  } catch {
-    return (def) => ({ ...def, parameters: def.parameters ?? {} });
-  }
-}
+// defineTool 直接静态依赖（@deepseek-ai/dsh-tools 已是真依赖）：
+// 参数规范化与 output 契约校验由它保证——之前动态 import + 兜底的写法让真宿主的校验失效过。
 
 export async function apply(ctx, config: any = {}) {
   const dataRoot = resolveDataRoot(config.dataRoot);
-  const defineTool = await resolveDefineTool(config);
 
   // 活性计数器（探活信号：subagent 生命周期事件驱动）
   const activityCounters = new Map();
@@ -93,7 +82,7 @@ export async function apply(ctx, config: any = {}) {
 
   if (engine.disabled) {
     // 开关关闭：只注册工具（读写照常），零定时器零订阅
-    registerTools(ctx, () => engine, defineTool);
+    registerTools(ctx, () => engine);
     return;
   }
 
@@ -132,10 +121,10 @@ export async function apply(ctx, config: any = {}) {
     if (sessionId) activityCounters.set(sessionId, (activityCounters.get(sessionId) ?? 0) + 1);
   });
 
-  registerTools(ctx, () => engine, defineTool);
+  registerTools(ctx, () => engine);
 }
 
-function registerTools(ctx, engineOf, defineTool) {
+function registerTools(ctx, engineOf) {
   const tm = () => new TaskmasterTools(engineOf());
   // 真实 defineTool 要求每个工具声明 output { schema, render }（dsh-tools 契约）；
   // 引擎返回结构统一为 { ok, ... }，用宽松 object schema + JSON 渲染。
@@ -178,7 +167,7 @@ function registerTools(ctx, engineOf, defineTool) {
       graphId: { type: "string", required: true },
       taskId: { type: "string", required: true },
       runId: { type: "string", required: true, description: "世代凭据（任务包里的 runId）" },
-      evidence: { type: "object", description: "{ 判据序号: 证据 }" },
+      evidence: { type: "object", additionalProperties: true, description: "{ 判据序号: 证据 }" },
       blocked: { type: "boolean" },
       reason: { type: "string" },
     },

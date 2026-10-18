@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import * as yaml from "js-yaml";
 import { join } from "node:path";
 import { apply } from "../src/host/plugin.ts";
 
@@ -73,7 +74,7 @@ test("宿主装配：工具注册 + 心跳 + spawn 派发 + subagent/end 收卷�
   assert.ok(state.effects.length > 0); // 心跳 effect 已挂
 
   // ① 属主注册图（ownerSessionId 记入 meta）
-  const reg = await tools.get("tm_upsert").execute({ graphYaml: graph() }, { agent: owner });
+  const reg = await tools.get("tm_upsert").execute({ graphYaml: yaml.dump(graph()) }, { agent: owner });
   assert.equal(reg.ok, true);
   const gid = reg.graphId;
 
@@ -124,7 +125,7 @@ test("live parent 约束：属主不在场 → spawn 档抛错降级（全挂则
   await apply(ctx, { dataRoot: dir });
   const until = async (cond: () => boolean, ms = 1500) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 10)); return cond(); };
   t.after(() => state.effects.forEach((d: any) => d?.()));
-  const reg = await tools.get("tm_upsert").execute({ graphYaml: graph() }, { agent: owner });
+  const reg = await tools.get("tm_upsert").execute({ graphYaml: yaml.dump(graph()) }, { agent: owner });
   const gv = async () => (await tools.get("tm_status").execute({ graphId: reg.graphId })).view;
   for (let i = 0; i < 120 && !(await gv()).plan; i++) await new Promise((r) => setTimeout(r, 20));
   const v = await gv();

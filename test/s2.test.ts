@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
+import * as yaml from "js-yaml";
 import { join } from "node:path";
 import { arbitrate } from "../src/scheduler/scheduler.ts";
 import { boot } from "../src/engine/boot.ts";
@@ -46,10 +47,7 @@ test("#15 并行派发（装配级）：concurrency=2 两张独立任务一批�
   });
   const tm = new TaskmasterTools(engine);
   const reg = await tm.upsertGraph({
-    graphYaml: {
-      apiVersion: "taskmaster/v1",
-      tasks: [T("t-1", ["a/"]), T("t-2", ["b/"])],
-    } as any,
+    graphYaml: yaml.dump({ apiVersion: "taskmaster/v1", tasks: [T("t-1", ["a/"]), T("t-2", ["b/"])] }),
   });
   const gid = reg.graphId;
   await engine.reconciler.reconcileAll();
@@ -97,7 +95,7 @@ test("#18 引擎停止：心跳停（零派发零探活），在途不杀、台�
   });
   const tm = new TaskmasterTools(engine);
   const reg = await tm.upsertGraph({
-    graphYaml: { apiVersion: "taskmaster/v1", tasks: [T("t-1")] } as any,
+    graphYaml: yaml.dump({ apiVersion: "taskmaster/v1", tasks: [T("t-1")] }),
   });
   const gid = reg.graphId;
 

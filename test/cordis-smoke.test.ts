@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
+import * as yaml from "js-yaml";
 import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import TimerPlugin from "@deepseek-ai/cordis-plugin-timer";
@@ -74,10 +75,10 @@ test("真 cordis 装配：插件挂载 → 工具注册 → 心跳出卡 → dis
     // ② 注册图 → 等真实心跳（50ms/拍）出计划卡
     const reg = await tools.get("tm_upsert").execute(
       {
-        graphYaml: {
+        graphYaml: yaml.dump({
           apiVersion: "taskmaster/v1",
           tasks: [{ id: "t-1", statement: "冒烟任务", deps: [], checks: [{ text: "通过", verify: "mechanical", command: "exit 0" }] }],
-        },
+        }),
       },
       { agent: owner },
     );
