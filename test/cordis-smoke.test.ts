@@ -53,12 +53,19 @@ test("真 cordis 装配：插件挂载 → 工具注册 → 心跳出卡 → dis
   root.reflect.provide("agents", { get: (id: string) => agents.get(id) });
   root.reflect.provide("subagents", {
     async startActivation(spec: any) {
+      // 真宿主契约收紧：provider 已注册、signal 必备、prompt 必须是 ContentBlock[]、label 必备
+      if (!["spawn", "fork"].includes(spec.provider)) throw new Error(`未注册的 provider: ${spec.provider}`);
+      if (typeof spec.signal?.throwIfAborted !== "function") throw new Error("startActivation 缺 signal");
+      if (!Array.isArray(spec.request.prompt)) throw new Error("request.prompt 必须是 ContentBlock[]");
+      if (typeof spec.label !== "string" || !spec.label) throw new Error("startActivation 缺 label（descriptor lossless 要求）");
       spawns.push(spec);
       const child = `child-${spawns.length}`;
       agents.set(child, { session: { id: child } });
       return { childId: child };
     },
-    async sendMessage(_parent: any, targetId: string, content: string) {
+    async sendMessage(_parent: any, targetId: string, content: any, options: any) {
+      if (!Array.isArray(content)) throw new Error("sendMessage content 必须是 ContentBlock[]");
+      if (typeof options?.signal?.throwIfAborted !== "function") throw new Error("sendMessage 缺 options.signal");
       notify.push({ targetId, content });
     },
   });
@@ -95,8 +102,11 @@ test("真 cordis 装配：插件挂载 → 工具注册 → 心跳出卡 → dis
     await tools.get("tm_confirm").execute({ graphId: reg.graphId, planId: card.planId }, { agent: owner });
     for (let i = 0; i < 40 && spawns.length === 0; i++) await sleep(25);
     assert.equal(spawns.length, 1, "真实心跳未派发");
-    // 任务包走真 prompt 渲染（含世代凭据与视野最小化）
-    assert.match(spawns[0].request.prompt, /世代 r-/);
+    // 任务包走真 prompt 渲染（ContentBlock[]；含世代凭据与视野最小化）
+    assert.ok(Array.isArray(spawns[0].request.prompt));
+    assert.ok(spawns[0].signal instanceof AbortSignal);
+    const promptText = spawns[0].request.prompt.map((b: any) => b.text).join("");
+    assert.match(promptText, /世代 r-/);
 
     // ④ 交卷（真实 socket 无，直接调工具）→ done
     const run = (await tools.get("tm_status").execute({ graphId: reg.graphId }, {})).view.inFlight[0];

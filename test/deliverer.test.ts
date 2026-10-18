@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Deliverer, DeliveryFailedError, DeliveryConflictError, assemblePackage } from "../src/deliverer/deliverer.ts";
+import { Deliverer, DeliveryFailedError, DeliveryConflictError, DeliveryDeferredError, assemblePackage } from "../src/deliverer/deliverer.ts";
 import { Binder } from "../src/binder/binder.ts";
 import { readProjection, casWriteProjection } from "../src/persister/projection-store.ts";
 
@@ -117,4 +117,36 @@ test("任务包视野最小化：只含本任务投影 + 前驱产物路径摘�
   assert.equal(pkg.deps[0].artifact.path, "db/schema.sql");
   assert.ok(!("tasks" in pkg)); // 不含全图
   assert.deepEqual(pkg.writeScopes, ["src/api/"]);
+});
+
+test("启动期竞态：执行面 pending → DeliveryDeferred，零占位零留痕（下拍重试）", async () => {
+  const dir = scratch();
+  seedReady(dir, "g-1", "t-1");
+  const binder = new Binder(dir);
+  const d = new Deliverer(dir, {
+    channels: { spawn: okChannel("s-should-not-run"), available: () => false, pending: () => true },
+    binder,
+  });
+  await assert.rejects(
+    () => d.deliver({ graphId: "g-1", graphVersion: 1, graph, task: graph.tasks[0] }),
+    (e) => e instanceof DeliveryDeferredError && e.code === "delivery-deferred",
+  );
+  // 没占位、没残留绑定、没失败留痕
+  const st = JSON.parse(readFileSync(join(dir, "state/g-1.state.json"), "utf8"));
+  assert.equal(st.data["t-1"].status, "ready");
+  assert.equal(binder.active().length, 0);
+  assert.equal(existsSync(join(dir, "runs")), false);
+});
+
+test("执行面确实不存在（非 pending）→ 仍按 delivery-failed 降级", async () => {
+  const dir = scratch();
+  seedReady(dir, "g-1", "t-1");
+  const d = new Deliverer(dir, {
+    channels: { spawn: failChannel, available: () => false, pending: () => false },
+    binder: new Binder(dir),
+  });
+  await assert.rejects(
+    () => d.deliver({ graphId: "g-1", graphVersion: 1, graph, task: graph.tasks[0] }),
+    (e) => e instanceof DeliveryFailedError,
+  );
 });

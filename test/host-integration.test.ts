@@ -11,20 +11,30 @@ function scratch() {
   return mkdtempSync(join(tmpdir(), "tm-host-"));
 }
 
-/** 最小 cordis 宿主 mock：tools 注册表 / 事件总线 / setInterval / agents 注册表 / subagents service */
-function mockHost(dir) {
+/** 最小 cordis 宿主 mock：tools 注册表 / 事件总线 / setInterval / agents 注册表 / subagents service
+ *  契约按真宿主 dsh-subagent 收紧：provider 只能是 spawn|fork、必须带 AbortSignal、
+ *  prompt 必须是 ContentBlock[]、sendMessage 的 content/options 都不能省。
+ *  lateSubagents=true 时服务在 apply 后才出现（复现 cordis 服务渐进就绪）。 */
+function mockHost(dir, { lateSubagents = false } = {}) {
   const tools = new Map<string, any>();
   const listeners = new Map<string, any[]>();
   const agents = new Map<string, any>();
-  const state: any = { beat: null, effects: [] as any[], spawnCalls: [] as any[], notifications: [] as any[] };
+  const state: any = { beat: null, effects: [] as any[], spawnCalls: [] as any[], notifications: [] as any[], subagentsReady: !lateSubagents };
   const subagents = {
     async startActivation(spec) {
+      if (typeof spec?.signal?.throwIfAborted !== "function") throw new Error("startActivation 缺 signal");
+      if (!Array.isArray(spec?.request?.prompt)) throw new Error("request.prompt 必须是 ContentBlock[]");
+      if (!["spawn", "fork"].includes(spec.provider)) throw new Error(`未注册的 provider: ${spec.provider}`);
+      // descriptor 无条件写 label：省略会变成 undefined 字段 → 宿主判非 lossless JSON
+      if (typeof spec.label !== "string" || !spec.label) throw new Error("startActivation 缺 label（descriptor lossless 要求）");
       const id = `child-${state.spawnCalls.length + 1}`;
-      state.spawnCalls.push({ provider: spec.provider, prompt: spec.request.prompt });
+      state.spawnCalls.push({ provider: spec.provider, label: spec.label, prompt: spec.request.prompt, signal: spec.signal, delivery: spec.delivery });
       agents.set(id, { session: { id } });
       return { childId: id };
     },
-    async sendMessage(parent, targetId, content) {
+    async sendMessage(parent, targetId, content, options) {
+      if (!Array.isArray(content)) throw new Error("sendMessage content 必须是 ContentBlock[]");
+      if (typeof options?.signal?.throwIfAborted !== "function") throw new Error("sendMessage 缺 options.signal");
       state.notifications.push({ targetId, content });
     },
   };
@@ -35,17 +45,21 @@ function mockHost(dir) {
       listeners.get(ev)!.push(cb);
       return () => {};
     },
-    emit: (ev, info) => (listeners.get(ev) ?? []).forEach((cb) => cb(info)),
+    emit: (ev, ...args) => (listeners.get(ev) ?? []).forEach((cb) => cb(...args)),
     // cordis 生命周期形态：effect(fn) 执行并持有清理器；心跳走真实 setInterval，测试用轮询
     effect: (fn: any) => {
       const dispose = fn();
       state.effects.push(dispose);
       return dispose;
     },
-    get: (name) => (name === "agents" ? agents : name === "subagents" ? subagents : undefined),
+    get: (name) => {
+      if (name === "agents") return agents;
+      if (name === "subagents") return state.subagentsReady ? subagents : undefined;
+      return undefined;
+    },
     subagents,
   };
-  return { ctx, tools, agents, state };
+  return { ctx, tools, agents, state, listeners };
 }
 
 const graph = (): any => ({
@@ -88,10 +102,16 @@ test("宿主装配：工具注册 + 心跳 + spawn 派发 + subagent/end 收卷�
   await tools.get("tm_confirm").execute({ graphId: gid, planId: v.plan.planId }, { agent: owner });
   await until(() => state.spawnCalls.length > 0);
   assert.equal(state.spawnCalls.length, 1);
+  // 真宿主契约：provider 用已注册名、prompt 是 ContentBlock[]、带 signal、label 是字符串
+  assert.equal(state.spawnCalls[0].provider, "spawn");
+  assert.ok(Array.isArray(state.spawnCalls[0].prompt));
+  assert.ok(state.spawnCalls[0].signal instanceof AbortSignal);
+  assert.match(state.spawnCalls[0].label, /Taskmaster /);
+  const promptText = state.spawnCalls[0].prompt.map((b: any) => b.text).join("");
   // 任务包携带世代凭据 + 视野最小化（prompt 里无 t-2 的陈述）
-  assert.match(state.spawnCalls[0].prompt, /世代 r-/);
-  assert.match(state.spawnCalls[0].prompt, /建表/);
-  assert.doesNotMatch(state.spawnCalls[0].prompt, /接口/);
+  assert.match(promptText, /世代 r-/);
+  assert.match(promptText, /建表/);
+  assert.doesNotMatch(promptText, /接口/);
   v = (await tools.get("tm_status").execute({ graphId: gid }, {})).view;
   assert.equal(v.inFlight[0].status, "running");
   const runId = v.inFlight[0].runId;
@@ -139,12 +159,96 @@ test("live parent 约束：属主不在场 → spawn 档抛错降级（全挂则
   assert.equal(reports.length, 1);
 });
 
-test("enabled=false：工具注册但零心跳零订阅", async (t) => {
+test("enabled=false：零心跳零订阅，但 tm_* 读写照常可用（NFR-3）", async (t) => {
   const dir = scratch(); // 无 config = 默认关
   const { ctx, tools, state } = mockHost(dir);
   await apply(ctx, { dataRoot: dir });
   const until = async (cond: () => boolean, ms = 1500) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 10)); return cond(); };
   t.after(() => state.effects.forEach((d: any) => d?.()));
-  assert.ok(tools.has("tm_status")); // 读写照常
+  assert.ok(tools.has("tm_status")); // 工具照常注册
   assert.equal(state.effects.length, 0); // 零心跳
+
+  // 关闭态仍可注册/查图（旧实现：engine 只有 {disabled:true}，这两个调用直接 internal 错）
+  const reg = await tools.get("tm_upsert").execute(
+    { graphYaml: yaml.dump({ apiVersion: "taskmaster/v1", tasks: [{ id: "t-1", statement: "x", checks: ["ok"] }] }) },
+    { agent: { session: { id: "owner-off" } } },
+  );
+  assert.equal(reg.ok, true, JSON.stringify(reg));
+  const st = await tools.get("tm_status").execute({ graphId: reg.graphId }, {});
+  assert.equal(st.ok, true, JSON.stringify(st));
+  assert.equal(st.view.counts.pending, 1);
+  assert.equal(st.view.engine.enabled, false);
+  // 引擎级操作在关闭态如实回 no-engine
+  const es = await tools.get("tm_engine_stop").execute({}, {});
+  assert.equal(es.code, "no-engine");
+});
+
+test("subagents 服务迟到（apply 后才 active）：惰性解析仍能派发", async (t) => {
+  const dir = scratch();
+  writeFileSync(join(dir, "config.yaml"), "enabled: true\nbeatMs: 30");
+  const { ctx, tools, agents, state } = mockHost(dir, { lateSubagents: true });
+  const owner = { session: { id: "owner-late" } };
+  agents.set("owner-late", owner);
+  await apply(ctx, { dataRoot: dir }); // 此刻 ctx.get("subagents") 还是 undefined
+  state.subagentsReady = true; // 服务稍后就绪
+  t.after(() => state.effects.forEach((d: any) => d?.()));
+  const until = async (cond: () => boolean, ms = 1500) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 10)); return cond(); };
+
+  const reg = await tools.get("tm_upsert").execute({ graphYaml: yaml.dump(graph()) }, { agent: owner });
+  const gv = async () => (await tools.get("tm_status").execute({ graphId: reg.graphId })).view;
+  for (let i = 0; i < 120 && !(await gv()).plan; i++) await new Promise((r) => setTimeout(r, 20));
+  const v = await gv();
+  await tools.get("tm_confirm").execute({ graphId: reg.graphId, planId: v.plan.planId }, { agent: owner });
+  await until(() => state.spawnCalls.length > 0);
+  assert.equal(state.spawnCalls.length, 1);
+  assert.equal((await gv()).inFlight[0].status, "running");
+});
+
+test("活性订阅：session/event 也计入执行者活动（长任务不被误判 stalled 的前提）", async (t) => {
+  const dir = scratch();
+  writeFileSync(join(dir, "config.yaml"), "enabled: true\nbeatMs: 30");
+  const { ctx, state, listeners } = mockHost(dir);
+  await apply(ctx, { dataRoot: dir });
+  t.after(() => state.effects.forEach((d: any) => d?.()));
+  assert.ok(listeners.has("subagent/start"));
+  assert.ok(listeners.has("subagent/end"));
+  assert.ok(listeners.has("session/event"), "缺少 session/event 活性订阅");
+});
+
+test("打回通知走真契约：sendMessage(content: ContentBlock[], { signal })；打回码不被通知异常吞掉", async (t) => {
+  const dir = scratch();
+  writeFileSync(join(dir, "config.yaml"), "enabled: true\nbeatMs: 30");
+  const { ctx, tools, agents, state } = mockHost(dir);
+  const owner = { session: { id: "owner-n" } };
+  agents.set("owner-n", owner);
+  await apply(ctx, { dataRoot: dir });
+  const until = async (cond: () => boolean, ms = 2000) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 10)); return cond(); };
+  t.after(() => state.effects.forEach((d: any) => d?.()));
+
+  const reg = await tools.get("tm_upsert").execute(
+    {
+      graphYaml: yaml.dump({
+        apiVersion: "taskmaster/v1",
+        tasks: [{ id: "t-1", statement: "需要证据", checks: ["人复核过"] }],
+      }),
+    },
+    { agent: owner },
+  );
+  const view = async () => (await tools.get("tm_status").execute({ graphId: reg.graphId })).view;
+  for (let i = 0; i < 120 && !(await view()).plan; i++) await new Promise((r) => setTimeout(r, 20));
+  const card = (await view()).plan;
+  await tools.get("tm_confirm").execute({ graphId: reg.graphId, planId: card.planId }, { agent: owner });
+  await until(() => state.spawnCalls.length > 0);
+  const runId = (await view()).inFlight[0].runId;
+
+  const bad = await tools.get("tm_node_update").execute({ graphId: reg.graphId, taskId: "t-1", runId, evidence: {} }, {});
+  assert.equal(bad.ok, false);
+  assert.equal(bad.code, "evidence-insufficient"); // 旧实现被 sendMessage 的 TypeError 替换成 internal
+  assert.equal(bad.missing.length, 1);
+  assert.equal(state.notifications.length, 1);
+  assert.ok(Array.isArray(state.notifications[0].content));
+
+  const good = await tools.get("tm_node_update").execute({ graphId: reg.graphId, taskId: "t-1", runId, evidence: { 0: "复核记录" } }, {});
+  assert.equal(good.ok, true);
+  assert.equal((await view()).counts.done, 1);
 });

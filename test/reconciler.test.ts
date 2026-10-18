@@ -1,7 +1,7 @@
 // reconciler 单元测试（S1 工作项 #9，覆盖 FR-8 / AC-8.1/8.2 及图状态分流）
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, existsSync } from "node:fs";
+import { mkdtempSync, readdirSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GraphStore } from "../src/graph-store/graph-store.ts";
@@ -10,6 +10,7 @@ import { Gate } from "../src/gate/gate.ts";
 import { Deliverer } from "../src/deliverer/deliverer.ts";
 import { Monitor } from "../src/monitor/monitor.ts";
 import { Reconciler } from "../src/reconciler/reconciler.ts";
+import { EngineGuard } from "../src/engine/guard.ts";
 import { readProjection, casWriteProjection } from "../src/persister/projection-store.ts";
 
 function scratch() {
@@ -26,16 +27,18 @@ const chainGraph = (): any => ({
 });
 
 /** 装配一套模块 + 注册图；fakeChannels 注入假通道 */
-function setup({ channels = {}, autoFacets = [] } = {}) {
+function setup({ channels = {}, autoFacets = [], guard = null, config = null }: any = {}) {
   const dir = scratch();
+  if (config) writeFileSync(join(dir, "config.yaml"), config);
+  const guardImpl = guard === "auto" ? new EngineGuard(dir) : guard;
   const store = new GraphStore(dir);
   const binder = new Binder(dir);
   const gate = new Gate(dir);
   const deliverer = new Deliverer(dir, { channels, binder });
   const monitor = new Monitor(dir, { binder, adapters: { activityOf: () => 0 } });
-  const reconciler = new Reconciler(dir, { store, binder, gate, deliverer, monitor, autoFacets });
+  const reconciler = new Reconciler(dir, { store, binder, gate, deliverer, monitor, autoFacets, guard: guardImpl });
   const { graphId } = store.upsert(chainGraph());
-  return { dir, store, binder, gate, reconciler, graphId };
+  return { dir, store, binder, gate, reconciler, graphId, guard: guardImpl };
 }
 
 const okSpawn = () => async () => ({ sessionId: `s-${Math.random().toString(36).slice(2, 8)}` });
@@ -159,4 +162,35 @@ test("reconcileAll：多图各自对账互不影响（暂停图跳过派发，�
   const sb = summaries.find((s) => s.graphId === b.graphId);
   assert.ok(sa.actions.some((x) => x.startsWith("plan-offered")));
   assert.equal(sb.actions.length, 0); // paused：零派发动作
+});
+
+test("启动期竞态：执行面 pending → delivery-deferred，不降级、任务留 ready、下拍可重试", async () => {
+  let ready = false;
+  const channels = {
+    spawn: okSpawn(),
+    available: () => ready,
+    pending: () => !ready,
+  };
+  const { store, binder, gate, reconciler, graphId, guard } = setup({
+    channels,
+    guard: "auto",
+    config: "enabled: true\nbeatMs: 30000\n",
+  });
+  await reconciler.reconcileGraph(graphId);
+  const card = gate.current(graphId)!;
+  gate.confirm(graphId, card.planId, card.readyHash);
+
+  // 执行面未就绪：延迟，不失败
+  const s = await reconciler.reconcileGraph(graphId);
+  assert.ok(s.actions.some((a) => a.startsWith("delivery-deferred")), JSON.stringify(s.actions));
+  assert.equal(guard.degraded, false);
+  assert.equal(binder.active().length, 0);
+  const st = readProjection(join(store.dataRoot, "state", `${graphId}.state.json`));
+  assert.equal(st.data["t-1"].status, "ready");
+
+  // 服务就绪后下一拍正常派发
+  ready = true;
+  const s2 = await reconciler.reconcileGraph(graphId);
+  assert.ok(s2.actions.some((a) => a.startsWith("delivered")), JSON.stringify(s2.actions));
+  assert.equal(binder.active().length, 1);
 });

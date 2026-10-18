@@ -75,3 +75,11 @@ test("死锁嗅探：就绪空 + 没在途 + 有等待 = 死锁；blocked 算在
   assert.equal(isComplete(chainGraph, { "t-1": { status: "done" }, "t-2": { status: "done" }, "t-3": { status: "done" } }), true);
   assert.equal(isComplete(chainGraph, { "t-1": { status: "done" } }), false);
 });
+
+test("ready 是「可派发」不是在途：出卡后仍在 ready 列表，不混进 inFlight", () => {
+  const r = computeReady(chainGraph, { "t-1": { status: "ready" } });
+  assert.deepEqual(r.ready.map((t) => t.id), ["t-1"]);
+  assert.equal(r.inFlight.length, 0);
+  // ready 任务仍然计入可派发集合（口径与 gate/confirm 一致）
+  assert.equal(isDeadlocked(r), false);
+});

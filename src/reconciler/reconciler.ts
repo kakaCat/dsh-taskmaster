@@ -13,7 +13,7 @@ import { atomicWriteFileSync } from "../persister/atomic-write.ts";
 import { EventLog } from "../persister/event-log.ts";
 import { computeReady, arbitrate, isDeadlocked, isComplete, dispatchableTasks } from "../scheduler/scheduler.ts";
 import type { Task } from "../types.ts";
-import { DeliveryFailedError } from "../deliverer/deliverer.ts";
+import { DeliveryFailedError, DeliveryDeferredError } from "../deliverer/deliverer.ts";
 
 const IN_FLIGHT = new Set(["dispatching", "running"]);
 
@@ -177,7 +177,10 @@ export class Reconciler {
             const r = await this.deliverer.deliver({ graphId, graphVersion: card.graphVersion, graph, task }, now);
             summary.actions.push(`delivered:${task.id}:${r.runId}`);
           } catch (e: any) {
-            if (e instanceof DeliveryFailedError) {
+            if (e instanceof DeliveryDeferredError) {
+              // 执行面还没就绪（重启首拍常见）：留在 ready，下一拍再试，不降级
+              summary.actions.push(`delivery-deferred:${task.id}`);
+            } else if (e instanceof DeliveryFailedError) {
               this.guard?.markDegraded("all-channels-down");
               summary.actions.push(`delivery-failed:${task.id}`);
             } else throw e;
@@ -244,6 +247,11 @@ export class Reconciler {
           const r = await this.deliverer.deliver({ graphId, graphVersion: meta.activeVersion, graph, task }, now);
           summary.actions.push(`delivered:${task.id}:${r.runId}`);
         } catch (e: any) {
+          if (e instanceof DeliveryDeferredError) {
+            // 执行面未就绪：卡已是 confirmed，下一拍走「已确认未派发」补投递
+            summary.actions.push(`delivery-deferred:${task.id}`);
+            break;
+          }
           if (e instanceof DeliveryFailedError) {
             this.guard?.markDegraded("all-channels-down");
             summary.actions.push(`delivery-failed:${task.id}`);

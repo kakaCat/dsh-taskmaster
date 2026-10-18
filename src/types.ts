@@ -95,18 +95,30 @@ export interface EventRecord {
   [key: string]: unknown;
 }
 
-export interface EngineModules {
+/** 开关无关的读写核心模块：enabled=false 时也装配，保证 tm_* 读写照常（NFR-3） */
+export interface BootCore {
   config: CoreConfig;
-  lock: import("./persister/lock.ts").SingleWriterLock;
+  dataRoot: string;
   store: import("./graph-store/graph-store.ts").GraphStore;
   binder: import("./binder/binder.ts").Binder;
   gate: import("./gate/gate.ts").Gate;
+  acceptor: import("./acceptor/acceptor.ts").Acceptor;
+  ctl: import("./lifecycle/graph-ctl.ts").GraphCtl;
+}
+
+export interface HeartbeatControl {
+  start(): void;
+  stop(): void;
+  running(): boolean;
+}
+
+export interface EngineModules extends BootCore {
+  lock: import("./persister/lock.ts").SingleWriterLock;
   guard: import("./engine/guard.ts").EngineGuard;
   deliverer: import("./deliverer/deliverer.ts").Deliverer;
-  acceptor: import("./acceptor/acceptor.ts").Acceptor;
   monitor: import("./monitor/monitor.ts").Monitor;
   reconciler: import("./reconciler/reconciler.ts").Reconciler;
-  ctl: import("./lifecycle/graph-ctl.ts").GraphCtl;
+  heartbeat: HeartbeatControl;
   bootReport: {
     rebuilt: string[];
     reattach: { resubmitted: string[]; reattached: string[]; stalled: string[] };
@@ -114,7 +126,7 @@ export interface EngineModules {
 }
 
 export type BootResult =
-  | { disabled: true; config: CoreConfig }
+  | ({ disabled: true } & BootCore)
   | ({ disabled: false } & EngineModules);
 
 export function isEnabledEngine(

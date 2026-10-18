@@ -3,6 +3,18 @@
 
 const ALLOWED_API_VERSION = "taskmaster/v1";
 const VERIFY_KINDS = new Set(["mechanical", "human"]);
+const GRAPH_KEYS = new Set(["apiVersion", "tasks"]);
+const TASK_KEYS = new Set(["id", "statement", "deps", "checks", "writeScopes", "roundBudget", "kind", "story", "milestone"]);
+const CHECK_KEYS = new Set(["text", "verify", "file", "command"]);
+
+/** 未知键报错不忽略（IF-1 兼容性约定：schema 只增字段，拼错的键必须当场暴露） */
+function unknownKeys(obj: any, allowed: Set<string>, at: string, issues: any[]) {
+  for (const key of Object.keys(obj)) {
+    if (!allowed.has(key)) {
+      issues.push({ target: `${at}.${key}`, reason: `未知字段 "${key}"（允许：${[...allowed].join(" / ")}）` });
+    }
+  }
+}
 
 export class GraphValidationError extends Error {
   code: string;
@@ -30,6 +42,7 @@ export function validateGraph(graph) {
     issues.push({ target: "tasks", reason: "必须是非空任务数组" });
     return issues; // 没有任务就没法做后续校验
   }
+  unknownKeys(graph, GRAPH_KEYS, "$", issues);
 
   const ids = new Set();
   graph.tasks.forEach((t, i) => {
@@ -37,6 +50,12 @@ export function validateGraph(graph) {
     if (t === null || typeof t !== "object" || Array.isArray(t)) {
       issues.push({ target: at, reason: "任务必须是对象" });
       return;
+    }
+    unknownKeys(t, TASK_KEYS, at, issues);
+    for (const key of ["kind", "story", "milestone"]) {
+      if (t[key] !== undefined && typeof t[key] !== "string") {
+        issues.push({ target: `${at}.${key}`, reason: `${key} 必须是字符串` });
+      }
     }
     if (typeof t.id !== "string" || !t.id.trim()) {
       issues.push({ target: `${at}.id`, reason: "id 必须是非空字符串" });
@@ -55,8 +74,14 @@ export function validateGraph(graph) {
         if (typeof c === "string") {
           if (!c.trim()) issues.push({ target: `${at}.checks[${j}]`, reason: "判据文本不能为空" });
         } else if (c && typeof c === "object" && typeof c.text === "string" && c.text.trim()) {
+          unknownKeys(c, CHECK_KEYS, `${at}.checks[${j}]`, issues);
           if (c.verify !== undefined && !VERIFY_KINDS.has(c.verify)) {
             issues.push({ target: `${at}.checks[${j}].verify`, reason: `verify 只能是 mechanical|human，实际为 ${JSON.stringify(c.verify)}` });
+          }
+          for (const key of ["file", "command"]) {
+            if (c[key] !== undefined && typeof c[key] !== "string") {
+              issues.push({ target: `${at}.checks[${j}].${key}`, reason: `${key} 必须是字符串` });
+            }
           }
         } else {
           issues.push({ target: `${at}.checks[${j}]`, reason: "判据必须是非空字符串或 { text, verify? }" });

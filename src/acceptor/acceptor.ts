@@ -122,7 +122,13 @@ export class Acceptor {
       events.append("reject", { taskId, runId, missing });
       const binding = this.binder.byTask(taskId);
       if (this.notifier && binding) {
-        await this.notifier(binding.sessionId, `交卷被打回（${this.#planRef(entry)}）：\n${missing.map((m) => `- ${m}`).join("\n")}\n请补齐后重新交卷。`);
+        // 通知是尽力而为：sendMessage 失败（属主不在场/宿主契约变化）不能吞掉打回语义，
+        // 否则调用方拿到的是通知异常而不是 evidence-insufficient。
+        try {
+          await this.notifier(binding.sessionId, `交卷被打回（${this.#planRef(entry)}）：\n${missing.map((m) => `- ${m}`).join("\n")}\n请补齐后重新交卷。`);
+        } catch {
+          /* 打回事件已留痕，忽略通知失败 */
+        }
       }
       throw new EvidenceInsufficientError(taskId, missing);
     }

@@ -72,3 +72,17 @@ updated: 2026-10-18
 - v0.5（2026-10-19）：S2 四个工作项落地（94/94 + tsc 0）：#15 写域裁决与并行批（`arbitrate` 先到先得 + 并发槽，config.concurrency 1~16）、#16 主动探活（silent 超 TTL 先探活一次，仍沉默下拍 stalled；probe 经宿主寻址）、#17 死锁巡检上报抽为可测方法（等待集哈希去重）、#18 引擎级停止/恢复（IF-7：tm_engine_stop/tm_engine_start，在途不杀、台账保留）。S2 出口：卡死/死锁注入测试与并行冲突计划卡均已覆盖（test/s2.test.ts、monitor.test.ts）。
 - v0.6（2026-10-19）：真机联调完成——真实 cordis 框架装配冒烟通过（test/cordis-smoke.test.ts）：真实 Context + timer 插件 + `{name,inject,Config,apply}` 对象插件协议 + 工具经 cordis 服务注册 + `ctx.effect` 托管心跳定时器 + dispose 全量清理。修正：Config 改为 schemastery schema（cordis 要求）；心跳改 `ctx.effect`（不再依赖 timer 服务注入）。全量 95/95、tsc 0。剩余：DSH 桌面 composition 的插件清单登记（loader 侧配置），属发布环节。
 - v0.7（2026-10-19）：发布形态就绪——bundle 打包（tsdown → dist/index.mjs，外部化宿主包）、`cordis.patch.yml` 装载层（insert: dsh-taskmaster）、package.json 增加 main/exports/files/dsh.bundle、数据根按惯例落 `$DSH_HOME/storages/dsh-taskmaster`；已在 `~/.dsh/profiles/desktop` 登记 link + bundles（备份 package.json），profile pnpm 解析通过。**激活需重启 DSH 桌面应用**（loader 在启动时组装 composition）；重启后新一轮会话应出现 tm_* 工具（默认 enabled=false，需在 dataRoot/config.yaml 打开）。
+- v0.8（2026-10-19）：真机黑盒测试后的修复批次（111/111 + tsc 0）：
+  - **输出契约**：`tm_*` 错误返回不再带 `issues: undefined`（真宿主 dsh-tools 判 non-lossless JSON，会把所有错误码替换成 `tool returned invalid output`）；`evidence-insufficient` 的 `missing` 一并透出。
+  - **投递链**：通道改惰性解析宿主服务（apply 时 `subagents` 尚未 active 会导致三档全 unavailable）；`provider: default → spawn/fork`；`startActivation` 补 `signal`、`prompt` 改 `ContentBlock[]`；探活/打回 `sendMessage` 补 `ContentBlock[]` 与 `{ signal }`。
+  - **单写者锁**：心跳每拍刷新 mtime；活进程的锁即使 mtime 过期也绝不接管（旧逻辑 30s 后把活锁当猝死锁抢走）；接管留痕 `reports/`。
+  - **开关语义**：`enabled=false` 仍装配 store/binder/gate/ctl/acceptor，tm_* 读写可用（旧实现所有工具 internal 错）。
+  - **可运维**：`tm_status` 暴露 engine 态（degraded/stopped/heartbeat）；`tm_engine_start` 清降级并重启心跳；`tm_engine_stop` 真停定时器；心跳防重入。
+  - **权限/视图/校验**：非属主 confirm/graph_ctl/task_action/改图 → `authority-required`；`tm_status` 缺图回 notice；`ready` 不再混入 inFlight；未知键（图/任务/判据）注册即拒。
+  - **活性**：新增 `session/event` 订阅——只订阅 subagent start/end 会把 >silentMs 的长任务误判 stalled。
+  - **注意**：dist 已重建，但生效仍需重启桌面应用；当前进程内的 degraded 标记也随重启清零。
+- v0.9（2026-10-19）：**启动期竞态根治**（118/118 + tsc 0）。v0.8 修完仍留一个真机才暴露的洞：心跳首拍可能早于 `subagents` 服务 active，投递失败即置 `degraded: true` 且**永不自愈**（后续派发全被 `engine.degraded` 拦下，只能人工 `tm_engine_start`）。根治分三层：
+  - **可延迟错误**：新增 `DeliveryDeferredError`（`code: delivery-deferred`）——「执行面还没起来」与「执行面根本没有」是两回事，前者不该降级。
+  - **就绪探测**（`src/host/channels.ts`）：`channels.available()` / `channels.pending()`。`pending` 只在真·暂时态返回 true：服务 impl 已注册但 `fiber.state !== 2`；或服务 active 但 provider（spawn/fork）尚未注册；或启动宽限 20s 内服务尚未出现。宽限过后仍无执行面 → `pending=false` → 照旧 `DeliveryFailed` 降级（**永久不存在仍要显式报警**，不静默）。
+  - **投递器步骤 ⓪**：占位（`ready → dispatching`）**之前**先问 `available()`；未就绪且 `pending()` → 抛 `DeliveryDeferredError`，**零占位、零绑定、零失败留痕**，任务留 `ready`。reconciler 两处 catch 先认延迟（记 `delivery-deferred:<taskId>`）再认失败，故既不降级也不写 failed run，下一拍自然重试。
+  - **真机验证**（重启窗口内冷启动竞态，见 [真机验证报告](taskmaster-live-verification.md)）：宿主重启后引擎 `17:42:06.260Z` 取锁并立即首拍，`dispatch@17:42:11.321Z` 恰为锁后 1 个 beat —— 首拍被延迟逻辑接管、下一拍补投递成功；无 `delivery-failed`、`degraded:false`；执行者交卷 `accept@17:43:41.669Z`，图转 `asleep`。

@@ -29,8 +29,10 @@ export function computeReady(graph: Graph, statusMap: StatusMap = {}): ReadyInfo
       done.push(task);
       continue;
     }
-    if (st !== "pending") {
-      inFlight.push(task); // ready/planned/dispatching/running/blocked 都算在途
+    // ready = 已物化但尚未派发；它与 pending 一样属于「可派发」，不是在途。
+    // （旧逻辑把 ready 塞进 inFlight，导致视图里 ready 恒空、卡片任务显示成在途。）
+    if (st !== "pending" && st !== "ready") {
+      inFlight.push(task); // dispatching/running/blocked 才算在途
       continue;
     }
     const pendingDeps = (task.deps ?? []).filter((d) => statusOf(d) !== "done");

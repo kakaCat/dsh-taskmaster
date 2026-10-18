@@ -37,12 +37,18 @@ export class SingleWriterLock {
       return { acquired: true };
     } catch (e: any) {
       if (e.code !== "EEXIST") throw e;
-      // 锁已存在：判猝死——优先看持有进程是否还活着（PID 探测），再退回 mtime 超时
+      // 锁已存在：判猝死。
+      // 铁律（NFR-4）：持有进程**活着**就绝不接管——mtime 过期只能说明心跳没刷，
+      // 不能证明进程死了（旧逻辑 pidAlive && !stale 才拒绝，导致活锁 30s 后被抢）。
+      //   · 有 pid 且进程存活 → 直接 engine-lock-held；
+      //   · 有 pid 且进程已死 → 立即接管；
+      //   · 无 pid（旧格式/坏文件）→ 只能退回 mtime：新则拒绝、过期才接管。
       const holder = safeRead(this.path);
-      const pidAlive = holder?.pid ? isPidAlive(holder.pid) : true;
+      const hasPid = typeof holder?.pid === "number" && holder.pid > 0;
+      if (hasPid && isPidAlive(holder.pid)) throw new LockHeldError(this.path, holder);
       const stat = statSync(this.path);
       const staleByTime = now - stat.mtimeMs > this.staleMs;
-      if (pidAlive && !staleByTime) throw new LockHeldError(this.path, holder);
+      if (!hasPid && !staleByTime) throw new LockHeldError(this.path, holder);
       rmSync(this.path); // 接管猝死锁
       const fd = openSync(this.path, "wx");
       writeFileSync(fd, body);

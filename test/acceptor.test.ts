@@ -156,3 +156,19 @@ test("blocked：状态翻 blocked + reports/ 上报落盘，引擎零自动动�
   const reports = readdirSync(join(dir, "reports")).filter((f) => f.includes("blocked"));
   assert.equal(reports.length, 1);
 });
+
+test("打回通知失败不得吞掉 evidence-insufficient（通知是尽力而为）", async () => {
+  const dir = scratch();
+  const { runId } = seedRunning(dir);
+  const a = new Acceptor(dir, {
+    binder: new Binder(dir),
+    cwd: dir,
+    notifier: async () => {
+      throw new TypeError("sendMessage contract broke");
+    },
+  });
+  await assert.rejects(
+    () => a.submit({ graphId: "g-1", graph, taskId: "t-1", runId, evidence: {} }),
+    (e) => e instanceof EvidenceInsufficientError && e.code === "evidence-insufficient",
+  );
+});

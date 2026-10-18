@@ -5,6 +5,9 @@
 //   ③ 图快照 + 事件流重建状态投影（不信任 state.json）
 //   ④ 绑定台账逐 run 处置：已交卷补验收 / 活着重挂探活 / 死了标 stalled 报人
 //   ⑤ 返回装配好的引擎（心跳循环由宿主定时器驱动 reconcileAll）
+//
+// 开关语义（NFR-3）：enabled=false 时不持锁、不自举、不重建，但**仍装配读写核心模块**
+// （store/binder/gate/ctl/acceptor）——tm_* 的注册/改图/视图/交卷/人裁照常可用，只是不派发不探活。
 
 import { join } from "node:path";
 import { loadConfig } from "./config.ts";
@@ -35,47 +38,60 @@ export class BootRefusedError extends Error {
  * @param dataRoot 数据根
  * @param opts { channels, adapters: { activityOf?, processAlive?, fetchResult? }, notifier?, cwd?, now? }
  *   fetchResult(binding) → { evidence } | null：执行者在我们停机期间已交卷（补验收的输入）
- * @returns { disabled: true } 或装配好的引擎对象（含 reattachReport）
+ * @returns { disabled: true, ...core } 或装配好的引擎对象（含 reattachReport）
  */
 export async function boot(dataRoot, { channels = {}, adapters = {}, notifier = null, cwd, now = new Date() }: any = {}) {
   // ① 配置
   const config = loadConfig(dataRoot);
-  if (!config.enabled) return { disabled: true, config };
 
-  // ② 锁 + 扫图校验元数据
-  const lock = new SingleWriterLock(join(dataRoot, ".engine.lock"), { staleMs: Math.max(config.beatMs * 6, 30_000) });
-  lock.acquire(); // 持锁失败 = engine-lock-held（NFR-4 红线）
   const store = new GraphStore(dataRoot);
-  for (const graphId of store.list()) {
-    try {
-      store.meta(graphId);
-    } catch (e: any) {
-      lock.release();
-      throw new BootRefusedError(`图 ${graphId} 元数据损坏（${e.message}）——拒绝猜生命周期，请人工修复 meta.json`);
+
+  // ② 锁 + 扫图校验元数据（仅启用态：关闭态不参与派发，也就不占单写者锁）
+  let lock: any = null;
+  if (config.enabled) {
+    lock = new SingleWriterLock(join(dataRoot, ".engine.lock"), { staleMs: Math.max(config.beatMs * 6, 30_000) });
+    const acquired = lock.acquire(); // 持锁失败 = engine-lock-held（NFR-4 红线）
+    if (acquired?.tookOverStale) {
+      // 接管猝死锁要留痕（原设计承诺「接管动作本身留痕可查」）
+      atomicWriteFileSync(
+        join(dataRoot, "reports", `${now.toISOString().replaceAll(":", "-")}-lock-takeover.json`),
+        JSON.stringify({ kind: "lock-takeover", at: now.toISOString(), note: "前任持锁进程已死，本次接管" }, null, 2),
+      );
+    }
+    for (const graphId of store.list()) {
+      try {
+        store.meta(graphId);
+      } catch (e: any) {
+        lock.release();
+        throw new BootRefusedError(`图 ${graphId} 元数据损坏（${e.message}）——拒绝猜生命周期，请人工修复 meta.json`);
+      }
+    }
+
+    // ③ 重建投影（快照 + 事件重放；幂等：重建结果与现存一致也无妨）
+    for (const graphId of store.list()) {
+      const graph = store.get(graphId);
+      const events = EventLog.open(join(dataRoot, "events", `${graphId}.events.ndjson`)).readAll();
+      const statusMap = rebuildProjection(graph, events);
+      const statePath = join(dataRoot, "state", `${graphId}.state.json`);
+      const cur = readProjection(statePath);
+      atomicWriteFileSync(statePath, JSON.stringify({ version: cur.version + 1, data: statusMap }));
     }
   }
 
-  // ③ 重建投影（快照 + 事件重放；幂等：重建结果与现存一致也无妨）
-  const rebuilt: any[] = [];
-  for (const graphId of store.list()) {
-    const graph = store.get(graphId);
-    const events = EventLog.open(join(dataRoot, "events", `${graphId}.events.ndjson`)).readAll();
-    const statusMap = rebuildProjection(graph, events);
-    const statePath = join(dataRoot, "state", `${graphId}.state.json`);
-    const cur = readProjection(statePath);
-    atomicWriteFileSync(statePath, JSON.stringify({ version: cur.version + 1, data: statusMap }));
-    rebuilt.push(graphId);
-  }
-
-  // 装配（④ 之前先把模块装好）
+  // 读写核心模块：与开关无关（tm_* 在 enabled=false 时照常读写）
   const binder = new Binder(dataRoot);
   const gate = new Gate(dataRoot);
+  const acceptor = new Acceptor(dataRoot, { binder, cwd: cwd ?? dataRoot, notifier });
+  const ctl = new GraphCtl(dataRoot, { store, binder });
+
+  if (!config.enabled) {
+    return { disabled: true, config, dataRoot, store, binder, gate, acceptor, ctl };
+  }
+
   const guard = new EngineGuard(dataRoot);
   const deliverer = new Deliverer(dataRoot, { channels, binder });
-  const acceptor = new Acceptor(dataRoot, { binder, cwd: cwd ?? dataRoot, notifier });
   const monitor = new Monitor(dataRoot, { binder, adapters, silentMs: config.silentMs });
   const reconciler = new Reconciler(dataRoot, { store, binder, gate, deliverer, monitor, autoFacets: config.autoFacets, guard, concurrency: config.concurrency });
-  const ctl = new GraphCtl(dataRoot, { store, binder });
 
   // ④ 在途逐 run 处置
   const reattach: any = { resubmitted: [], reattached: [], stalled: [] };
@@ -116,6 +132,7 @@ export async function boot(dataRoot, { channels = {}, adapters = {}, notifier = 
   return {
     disabled: false,
     config,
+    dataRoot,
     lock,
     store,
     binder,
@@ -126,6 +143,6 @@ export async function boot(dataRoot, { channels = {}, adapters = {}, notifier = 
     monitor,
     reconciler,
     ctl,
-    bootReport: { rebuilt, reattach },
+    bootReport: { rebuilt: store.list(), reattach },
   };
 }

@@ -31,6 +31,22 @@ export class DeliveryFailedError extends Error {
   }
 }
 
+/**
+ * 执行面暂时未就绪（服务尚未 active / provider 尚未注册）——**不是失败**。
+ * 典型场景：宿主重启后首拍立即对账，而 subagents 插件比本插件晚一拍 active；
+ * 此时若按 DeliveryFailed 处理会置 degraded 且不再重试（只能人工 tm_engine_start）。
+ * 语义：任务留在 ready，下一拍再看，不占位、不留失败痕、不降级。
+ */
+export class DeliveryDeferredError extends Error {
+  code: string;
+  taskId: string;
+  constructor(taskId, detail = "execution surface not ready yet") {
+    super(`delivery deferred for ${taskId}: ${detail}`);
+    this.code = "delivery-deferred";
+    this.taskId = taskId;
+  }
+}
+
 /** 默认通道优先级（IF-8）；"conversation" 不在链里——全挂时由调用方转纯对话流 */
 export const CHANNEL_ORDER = ["startActivation", "branch", "spawn"];
 
@@ -80,11 +96,19 @@ export class Deliverer {
    * 投递一个任务。
    * @returns {{ delivered: true, runId, sessionId, channel } }
    * @throws DeliveryConflictError 任务不在 ready（并发触发/状态异常）
+   * @throws DeliveryDeferredError 执行面暂时未就绪（不占位、不降级，下拍重试）
    * @throws DeliveryFailedError 全部通道不可用（已回滚，可下拍再来——由人或对账决定）
    */
   async deliver({ graphId, graphVersion, graph, task }, now = new Date()) {
     const statePath = this.#statePath(graphId);
     const events = this.#eventLog(graphId);
+
+    // ⓪ 执行面就绪检查（启动期竞态）：未就绪 = 延迟，不是失败。
+    // 必须在 CAS 占位之前判断，否则会平白制造 dispatching→ready 的抖动。
+    if (typeof this.channels.available === "function" && !this.channels.available()) {
+      if (this.channels.pending?.()) throw new DeliveryDeferredError(task.id, "subagents/window service not active yet");
+      // 服务确实不存在（宿主没有执行面）：继续走通道，由 DeliveryFailed 如实降级
+    }
 
     // ① CAS 占位：ready → dispatching
     const proj = readProjection(statePath);

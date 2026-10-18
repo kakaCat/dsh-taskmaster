@@ -47,19 +47,30 @@ test("单写者锁：释放后可再获取；非持有者不能释放别人的�
   c.release();
 });
 
-test("单写者锁：猝死锁（mtime 超 staleMs）可被接管", () => {
+test("单写者锁：活进程的锁即使 mtime 过期也绝不被接管（NFR-4）", () => {
   const dir = scratch();
   const p = join(dir, ".engine.lock");
   const a = new SingleWriterLock(p, { staleMs: 1000 });
   a.acquire();
-  // 模拟猝死：不 release，把 mtime 拨到 10 秒前
+  // 心跳没刷导致 mtime 很旧——但持有进程（当前测试进程）还活着
   const old = new Date(Date.now() - 10_000);
   utimesSync(p, old, old);
   const b = new SingleWriterLock(p, { staleMs: 1000 });
-  const r = b.acquire();
+  assert.throws(() => b.acquire(), (e: any) => e instanceof LockHeldError && e.code === "engine-lock-held");
+  a.release();
+});
+
+test("单写者锁：无 pid 的旧格式锁 mtime 过期 → 按时间接管", () => {
+  const dir = scratch();
+  const p = join(dir, ".engine.lock");
+  writeFileSync(p, JSON.stringify({ token: "legacy-no-pid", acquiredAt: new Date().toISOString() }));
+  const old = new Date(Date.now() - 10_000);
+  utimesSync(p, old, old);
+  const lock = new SingleWriterLock(p, { staleMs: 1000 });
+  const r = lock.acquire();
   assert.equal(r.acquired, true);
-  assert.equal(r.tookOverStale, true);
-  b.release();
+  assert.equal((r as any).tookOverStale, true);
+  lock.release();
 });
 
 test("单写者锁：持有进程已死（PID 探测）→ 立即接管，不等 mtime TTL", () => {
