@@ -27,10 +27,10 @@ export class TaskmasterTools {
     return (args) => fn(args).catch((e) => ({ ok: false, code: e.code ?? "internal", message: e.message, issues: e.issues }));
   }
 
-  /** IF-1 注册/改图（读写照常，不受开关管辖） */
-  upsertGraph = this.#wrap(async ({ graphYaml, graphId }) => {
+  /** IF-1 注册/改图（读写照常，不受开关管辖）；ownerSessionId = 属主窗口（NFR-4） */
+  upsertGraph = this.#wrap(async ({ graphYaml, graphId, ownerSessionId }) => {
     const graph = typeof graphYaml === "string" ? yaml.load(graphYaml) : graphYaml;
-    const r = this.e.store.upsert(graph, { graphId });
+    const r = this.e.store.upsert(graph, { graphId, ownerSessionId });
     return { ok: true, ...r };
   });
 

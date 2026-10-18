@@ -1,7 +1,7 @@
 // dsh-taskmaster 插件入口（S1 施工中）。
-// S1 全部 14 个工作项完成：persister/graph-store/binder/scheduler/gate/deliverer/
-// acceptor/monitor/reconciler/graph-ctl/boot/statuser/guard/tools + M1 走查 e2e。
-// 待续：宿主适配器（startActivation/branch/spawn 真通道 + 事件订阅）→ 宿主插件装配 → S2。
+// S1 全部工作项 + 宿主集成（cordis 插件/通道/适配器）完成。
+// 待续：真宿主联调（cordis 装配 + 真实 spawn 全链路）→ S2。
+export { apply, name as pluginName, Config as pluginConfig } from "./host/plugin.js";
 // 施工序与出口判据见 docs/projects/PRJ-0002/plan/taskmaster-plan.md。
 
 export { atomicWriteFileSync } from "./persister/atomic-write.js";

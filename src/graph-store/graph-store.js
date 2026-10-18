@@ -60,7 +60,7 @@ export class GraphStore {
    * @param graph 图对象（先经 assertValidGraph）
    * @returns {{ graphId, version }}
    */
-  upsert(graph, { graphId } = {}) {
+  upsert(graph, { graphId, ownerSessionId } = {}) {
     assertValidGraph(graph);
     const isCreate = graphId === undefined;
     // 新建：生成唯一 id（时间戳 + 随机后缀；同毫秒批量创建也不撞）
@@ -89,6 +89,7 @@ export class GraphStore {
       graphId: gid,
       activeVersion: nextVersion,
       lifecycle: current.data?.lifecycle ?? "active",
+      ownerSessionId: current.data?.ownerSessionId ?? ownerSessionId ?? null, // 属主窗口（NFR-4：计划卡/上报/人裁的落点）
       updatedAt: new Date().toISOString(),
     };
     casWriteProjection(metaPath, current.version, meta);

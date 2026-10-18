@@ -31,12 +31,13 @@ export class DeliveryFailedError extends Error {
 /** 默认通道优先级（IF-8）；"conversation" 不在链里——全挂时由调用方转纯对话流 */
 export const CHANNEL_ORDER = ["startActivation", "branch", "spawn"];
 
-/** 任务包组装（FR-5 视野最小化）：只含本任务投影 + 前驱产物的路径+摘要 */
+/** 任务包组装（FR-5 视野最小化 + FR-10 世代凭据）：只含本任务投影 + runId + 前驱产物的路径+摘要 */
 export function assemblePackage(graph, task, { artifacts = {}, binding = {} } = {}) {
   return {
     graphId: binding.graphId,
     graphVersion: binding.graphVersion,
     taskId: task.id,
+    runId: binding.runId ?? null, // 世代凭据：交卷只认它
     statement: task.statement,
     deps: (task.deps ?? []).map((d) => ({
       taskId: d,
@@ -89,7 +90,10 @@ export class Deliverer {
       [task.id]: { ...statusMap[task.id], status: "dispatching", graphVersion },
     });
 
-    // ② 逐档尝试通道
+    // ② 预留绑定：世代先签发（任务包必须携带 runId）
+    const reserved = this.binder.reserve({ graphId, graphVersion, taskId: task.id, channel: null }, now);
+
+    // ③ 逐档尝试通道
     const attempts = [];
     let sessionId = null;
     let usedChannel = null;
@@ -100,7 +104,7 @@ export class Deliverer {
         continue;
       }
       try {
-        const pkg = assemblePackage(graph, task, { binding: { graphId, graphVersion } });
+        const pkg = assemblePackage(graph, task, { binding: reserved });
         const r = await channel(pkg);
         sessionId = r.sessionId;
         usedChannel = name;
@@ -111,8 +115,9 @@ export class Deliverer {
       }
     }
 
-    // ③ 全挂 → 回滚 + 失败留痕，不自动重试
+    // ④ 全挂 → 回收预留 + 回滚 + 失败留痕，不自动重试
     if (!sessionId) {
+      this.binder.drop(task.id, reserved.runId);
       const back = readProjection(statePath);
       casWriteProjection(statePath, back.version, {
         ...back.data,
@@ -123,11 +128,12 @@ export class Deliverer {
       throw new DeliveryFailedError(task.id, attempts);
     }
 
-    // ④ 建绑定（世代签发）；绑定冲突 → 回滚（sessionId 被占等）
+    // ⑤ 补挂会话（不变量②在此强制）；冲突 → 回收 + 回滚
     let binding;
     try {
-      binding = this.binder.open({ graphId, graphVersion, taskId: task.id, sessionId, channel: usedChannel }, now);
+      binding = this.binder.attachSession(task.id, reserved.runId, sessionId, usedChannel);
     } catch (e) {
+      this.binder.drop(task.id, reserved.runId);
       const back = readProjection(statePath);
       casWriteProjection(statePath, back.version, {
         ...back.data,

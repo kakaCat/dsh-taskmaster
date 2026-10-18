@@ -55,33 +55,27 @@ export class Binder {
     return this.active().find((b) => b.taskId === taskId) ?? null;
   }
 
+  /** 寻址查询忽略未挂会话的预留绑定 */
   bySession(sessionId) {
+    if (!sessionId) return null;
     return this.active().find((b) => b.sessionId === sessionId) ?? null;
   }
 
-  byGraph(graphId) {
-    return this.active().filter((b) => b.graphId === graphId);
-  }
-
   /**
-   * 投递成功建绑定。强制不变量①②。
-   * @returns 新绑定（含签发的 runId 世代）
+   * 预留绑定：先签发 runId 世代（任务包必须携带世代凭据，FR-10），sessionId 投递成功后补挂。
+   * 不变量①在此强制；不变量②在 attachSession 强制。
    */
-  open({ graphId, graphVersion, taskId, sessionId, channel }, now = new Date()) {
+  reserve({ graphId, graphVersion, taskId, channel }, now = new Date()) {
     const onTask = this.byTask(taskId);
     if (onTask) {
       throw new BindingConflictError("任务已有活跃绑定", `task=${taskId} run=${onTask.runId}`);
-    }
-    const onSession = this.bySession(sessionId);
-    if (onSession) {
-      throw new BindingConflictError("会话已挂活跃绑定", `session=${sessionId} task=${onSession.taskId}`);
     }
     const binding = {
       graphId,
       graphVersion,
       taskId,
       runId: `r-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
-      sessionId,
+      sessionId: null,
       channel,
       state: "active",
       dispatchedAt: now.toISOString(),
@@ -91,6 +85,39 @@ export class Binder {
     this.bindings.push(binding);
     this.#persist();
     return binding;
+  }
+
+  /** 投递成功后补挂会话与通道；同一 sessionId 不出现在两条活跃绑定（不变量②） */
+  attachSession(taskId, runId, sessionId, channel = null) {
+    const b = this.byTask(taskId);
+    if (!b || b.runId !== runId) throw new BindingConflictError("预留绑定不存在或世代不符", `task=${taskId} run=${runId}`);
+    const onSession = this.bySession(sessionId);
+    if (onSession && onSession !== b) {
+      throw new BindingConflictError("会话已挂活跃绑定", `session=${sessionId} task=${onSession.taskId}`);
+    }
+    b.sessionId = sessionId;
+    if (channel) b.channel = channel;
+    this.#persist();
+    return b;
+  }
+
+  /** 投递失败回收预留（不自动重试的台账侧） */
+  drop(taskId, runId) {
+    const b = this.byTask(taskId);
+    if (b && b.runId === runId) {
+      this.bindings = this.bindings.filter((x) => x !== b);
+      this.#persist();
+    }
+  }
+
+  /** 投递成功建绑定（= reserve + attachSession 的便捷组合，测试与同步路径用） */
+  open({ graphId, graphVersion, taskId, sessionId, channel }, now = new Date()) {
+    const b = this.reserve({ graphId, graphVersion, taskId, channel }, now);
+    return this.attachSession(taskId, b.runId, sessionId);
+  }
+
+  byGraph(graphId) {
+    return this.active().filter((b) => b.graphId === graphId);
   }
 
   /** 任务终态关绑定（留痕在 events/runs，台账条目移除） */
