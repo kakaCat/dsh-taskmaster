@@ -21,7 +21,7 @@ export class Reconciler {
    * @param dataRoot 数据根
    * @param deps { store: GraphStore, binder: Binder, gate: Gate, deliverer: Deliverer, monitor: Monitor, autoFacets?: string[] }
    */
-  constructor(dataRoot, { store, binder, gate, deliverer, monitor, autoFacets = [] }) {
+  constructor(dataRoot, { store, binder, gate, deliverer, monitor, autoFacets = [], guard = null }) {
     this.dataRoot = dataRoot;
     this.store = store;
     this.binder = binder;
@@ -29,6 +29,7 @@ export class Reconciler {
     this.deliverer = deliverer;
     this.monitor = monitor;
     this.autoFacets = autoFacets;
+    this.guard = guard; // null = 宽松（测试/独立使用）；引擎装配必带（#13）
     this.deadlockReported = new Map(); // graphId → waiting 集哈希（去重，重启后重复报一次可接受）
   }
 
@@ -95,6 +96,12 @@ export class Reconciler {
       }
     }
 
+    // 总开关关闭：不派发不探活（漂移修复是对账簿记，照常）
+    if (this.guard && !this.guard.allowMonitor()) {
+      summary.actions.push("disabled-skip");
+      return summary;
+    }
+
     // ② 在途探活（paused/stopping 也照做——R-17/R-18 暂停停止不停盯）
     const liveness = this.monitor.sweep(graphId, now);
     if (liveness.length > 0) summary.liveness = liveness;
@@ -129,13 +136,19 @@ export class Reconciler {
         const task = graph.tasks.find((t) => t.id === item.taskId);
         const st = statusMap[task.id]?.status ?? "pending";
         if (task && st === "ready") {
+          if (this.guard && !this.guard.allowDispatch()) {
+            summary.actions.push("dispatch-skipped-degraded"); // 降级：纯对话流，卡在人手里
+            break;
+          }
           try {
             const r = await this.deliverer.deliver({ graphId, graphVersion: card.graphVersion, graph, task }, now);
             summary.actions.push(`delivered:${task.id}:${r.runId}`);
             deliveredAny = true;
           } catch (e) {
-            if (e instanceof DeliveryFailedError) summary.actions.push(`delivery-failed:${task.id}`);
-            else throw e;
+            if (e instanceof DeliveryFailedError) {
+              this.guard?.markDegraded("all-channels-down");
+              summary.actions.push(`delivery-failed:${task.id}`);
+            } else throw e;
           }
         }
       }
@@ -197,14 +210,20 @@ export class Reconciler {
       return summary;
     }
     if (offered.autoConfirmed) {
-      // gate=auto 切面：免确认直接投递
+      // gate=auto 切面：免确认直接投递（降级时跳过，卡已由 gate 确认，恢复后由 confirmed 分支补投递）
+      if (this.guard && !this.guard.allowDispatch()) {
+        summary.actions.push("dispatch-skipped-degraded");
+        return summary;
+      }
       const task = batch[0];
       try {
         const r = await this.deliverer.deliver({ graphId, graphVersion: meta.activeVersion, graph, task }, now);
         summary.actions.push(`delivered:${task.id}:${r.runId}`);
       } catch (e) {
-        if (e instanceof DeliveryFailedError) summary.actions.push(`delivery-failed:${task.id}`);
-        else throw e;
+        if (e instanceof DeliveryFailedError) {
+          this.guard?.markDegraded("all-channels-down");
+          summary.actions.push(`delivery-failed:${task.id}`);
+        } else throw e;
       }
       return summary;
     }

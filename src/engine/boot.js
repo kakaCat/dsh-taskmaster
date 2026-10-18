@@ -21,6 +21,7 @@ import { Acceptor } from "../acceptor/acceptor.js";
 import { Monitor } from "../monitor/monitor.js";
 import { Reconciler } from "../reconciler/reconciler.js";
 import { GraphCtl } from "../lifecycle/graph-ctl.js";
+import { EngineGuard } from "./guard.js";
 
 export class BootRefusedError extends Error {
   constructor(reason) {
@@ -68,10 +69,11 @@ export async function boot(dataRoot, { channels = {}, adapters = {}, notifier = 
   // 装配（④ 之前先把模块装好）
   const binder = new Binder(dataRoot);
   const gate = new Gate(dataRoot);
+  const guard = new EngineGuard(dataRoot);
   const deliverer = new Deliverer(dataRoot, { channels, binder });
   const acceptor = new Acceptor(dataRoot, { binder, cwd: cwd ?? dataRoot, notifier });
   const monitor = new Monitor(dataRoot, { binder, adapters, silentMs: config.silentMs });
-  const reconciler = new Reconciler(dataRoot, { store, binder, gate, deliverer, monitor, autoFacets: config.autoFacets });
+  const reconciler = new Reconciler(dataRoot, { store, binder, gate, deliverer, monitor, autoFacets: config.autoFacets, guard });
   const ctl = new GraphCtl(dataRoot, { store, binder });
 
   // ④ 在途逐 run 处置
@@ -117,6 +119,7 @@ export async function boot(dataRoot, { channels = {}, adapters = {}, notifier = 
     store,
     binder,
     gate,
+    guard,
     deliverer,
     acceptor,
     monitor,

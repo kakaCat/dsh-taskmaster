@@ -1,6 +1,6 @@
 // dsh-taskmaster 插件入口（S1 施工中）。
-// 已完成：#1~#11 + #12 statuser（量化视图投影）。
-// 待续：开关降级(#13) → tm_* 工具面(#14)。
+// 已完成：#1~#12 + #13 guard（开关 + 执行面降级）。
+// 待续：tm_* 工具面(#14，S1 收口)。
 // 施工序与出口判据见 docs/projects/PRJ-0002/plan/taskmaster-plan.md。
 
 export { atomicWriteFileSync } from "./persister/atomic-write.js";
@@ -20,4 +20,5 @@ export { GraphCtl, ConfirmRequiredError } from "./lifecycle/graph-ctl.js";
 export { boot, BootRefusedError } from "./engine/boot.js";
 export { loadConfig, DEFAULT_CONFIG } from "./engine/config.js";
 export { rebuildProjection } from "./engine/rebuild.js";
+export { EngineGuard } from "./engine/guard.js";
 export { Statuser, computeWaves } from "./statuser/statuser.js";
