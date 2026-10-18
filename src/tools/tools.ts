@@ -97,7 +97,7 @@ export class TaskmasterTools {
   });
 
   /** IF-3 交卷 / 报 blocked（执行者回向；不按属主校验——执行者不是属主） */
-  nodeUpdate = this.#wrap(async ({ graphId, taskId, runId, evidence, blocked = false, reason }) => {
+  nodeUpdate = this.#wrap(async ({ graphId, taskId, runId, evidence, blocked = false, reason, cwd }) => {
     const binding = this.e.binder.byTask(taskId);
     const graphVersion = binding?.graphVersion ?? this.e.store.meta(graphId).activeVersion;
     const graph = this.e.store.get(graphId, graphVersion); // 按派发时快照验收
@@ -105,7 +105,7 @@ export class TaskmasterTools {
       const r = await this.e.acceptor.reportBlocked({ graphId, taskId, runId, reason });
       return { ok: true, ...r };
     }
-    const r = await this.e.acceptor.submit({ graphId, graph, taskId, runId, evidence });
+    const r = await this.e.acceptor.submit({ graphId, graph, taskId, runId, evidence, cwd });
     return { ok: true, ...r };
   });
 

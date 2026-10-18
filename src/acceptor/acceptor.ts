@@ -84,11 +84,11 @@ export class Acceptor {
   /**
    * 交卷（IF-3）。
    * @param graph 派发时的图快照（任务定义来源）
-   * @param submission { runId, taskId, evidence: { [checkIndex]: string } }
+   * @param submission { runId, taskId, evidence: { [checkIndex]: string }, cwd? }（cwd = 执行者工作目录，机械核验的基准）
    * @returns {{ accepted: true, idempotent?: boolean } }
    * @throws StaleRunError 世代失效；NotRunningError 非 running；EvidenceInsufficientError 打回
    */
-  async submit({ graphId, graph, taskId, runId, evidence = {} }, now = new Date()) {
+  async submit({ graphId, graph, taskId, runId, evidence = {}, cwd }: any, now = new Date()) {
     const events = this.#eventLog(graphId);
     const statePath = this.#statePath(graphId);
     const proj = readProjection(statePath);
@@ -109,7 +109,8 @@ export class Acceptor {
     const missing: any[] = [];
     checks.forEach((check, i) => {
       if (check.verify === "mechanical") {
-        if (!verifyMechanical(check, { cwd: this.cwd, runner: this.runner })) {
+        // 机械核验必须跑在执行者的工作目录（调用方传入），否则命令会在宿主进程 cwd 里执行
+        if (!verifyMechanical(check, { cwd: cwd ?? this.cwd, runner: this.runner })) {
           missing.push(`checks[${i}]「${check.text}」机械核验未通过`);
         }
       } else if (typeof evidence[i] !== "string" || !evidence[i].trim()) {

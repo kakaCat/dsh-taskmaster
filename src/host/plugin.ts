@@ -204,8 +204,12 @@ function registerTools(ctx, engineOf) {
       blocked: { type: "boolean" },
       reason: { type: "string" },
     },
-    async execute(args) {
-      return tm().nodeUpdate(args);
+    async execute(args, exec) {
+      // 机械核验的基准目录 = 交卷会话的工作目录（不是宿主进程 cwd）。
+      // 宿主进程 cwd 是 profile 目录，拿它跑 `npm test` 必然误判——真机联调踩到过。
+      const wd = ctx.get?.("workingDirectory");
+      const cwd = exec?.agent?.session && wd?.get ? wd.get(exec.agent.session) : undefined;
+      return tm().nodeUpdate({ ...args, cwd });
     },
   });
 

@@ -172,3 +172,24 @@ test("打回通知失败不得吞掉 evidence-insufficient（通知是尽力而�
     (e) => e instanceof EvidenceInsufficientError && e.code === "evidence-insufficient",
   );
 });
+
+test("机械核验基准目录：submit 传 cwd 时在该目录执行（宿主进程 cwd 不是工作区）", async () => {
+  const dir = scratch();
+  const { runId } = seedRunning(dir);
+  const ws = scratch();
+  writeFileSync(join(ws, "marker"), "x");
+  const graph = {
+    apiVersion: "taskmaster/v1",
+    tasks: [{ id: "t-1", statement: "x", deps: [], checks: [{ text: "标记文件在", verify: "mechanical", command: "test -f marker" }] }],
+  };
+  // 默认 cwd（dir）里没有 marker → 不传 cwd 必须打回
+  const a1 = new Acceptor(dir, { binder: new Binder(dir), cwd: dir });
+  await assert.rejects(
+    () => a1.submit({ graphId: "g-1", graph, taskId: "t-1", runId, evidence: {} }),
+    /机械核验未通过/,
+  );
+  // 传执行者工作目录 → 通过
+  const a2 = new Acceptor(dir, { binder: new Binder(dir), cwd: dir });
+  const r = await a2.submit({ graphId: "g-1", graph, taskId: "t-1", runId, evidence: {}, cwd: ws });
+  assert.equal(r.accepted, true);
+});
