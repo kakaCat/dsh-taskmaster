@@ -15,7 +15,7 @@ function mockHost(dir) {
   const tools = new Map<string, any>();
   const listeners = new Map<string, any[]>();
   const agents = new Map<string, any>();
-  const state: any = { beat: null, spawnCalls: [] as any[], notifications: [] as any[] };
+  const state: any = { beat: null, effects: [] as any[], spawnCalls: [] as any[], notifications: [] as any[] };
   const ctx = {
     tools: { register: (t) => tools.set(t.name, t) },
     on: (ev, cb) => {
@@ -24,9 +24,11 @@ function mockHost(dir) {
       return () => {};
     },
     emit: (ev, info) => (listeners.get(ev) ?? []).forEach((cb) => cb(info)),
-    setInterval: (fn) => {
-      state.beat = fn;
-      return () => {};
+    // cordis 生命周期形态：effect(fn) 执行并持有清理器；心跳走真实 setInterval，测试用轮询
+    effect: (fn: any) => {
+      const dispose = fn();
+      state.effects.push(dispose);
+      return dispose;
     },
     get: (name) => (name === "agents" ? agents : undefined),
     subagents: {
@@ -52,34 +54,37 @@ const graph = (): any => ({
   ],
 });
 
-test("宿主装配：工具注册 + 心跳 + spawn 派发 + subagent/end 收卷全链路", async () => {
+test("宿主装配：工具注册 + 心跳 + spawn 派发 + subagent/end 收卷全链路", async (t) => {
   const dir = scratch();
-  writeFileSync(join(dir, "config.yaml"), "enabled: true\nbeatMs: 1000");
+  writeFileSync(join(dir, "config.yaml"), "enabled: true\nbeatMs: 30");
   const { ctx, tools, agents, state } = mockHost(dir);
   const owner = { session: { id: "owner-w1" } };
   agents.set("owner-w1", owner); // 属主窗口的 live agent（live parent 约束）
 
   await apply(ctx, { dataRoot: dir });
+  const until = async (cond: () => boolean, ms = 1500) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 10)); return cond(); };
+  t.after(() => state.effects.forEach((d: any) => d?.()));
 
   // 工具注册齐全
   for (const name of ["tm_upsert", "tm_confirm", "tm_node_update", "tm_status", "tm_graph_ctl", "tm_task_action"]) {
     assert.ok(tools.has(name), `缺工具 ${name}`);
   }
-  assert.ok(state.beat); // 心跳定时器已挂
+  assert.ok(state.effects.length > 0); // 心跳 effect 已挂
 
   // ① 属主注册图（ownerSessionId 记入 meta）
   const reg = await tools.get("tm_upsert").execute({ graphYaml: graph() }, { agent: owner });
   assert.equal(reg.ok, true);
   const gid = reg.graphId;
 
-  // ② 心跳一拍：出卡
-  await state.beat();
-  let v = (await tools.get("tm_status").execute({ graphId: gid }, {})).view;
+  // ② 真实心跳（轮询）出卡
+  const getView = async () => (await tools.get("tm_status").execute({ graphId: gid }, {})).view;
+  for (let i = 0; i < 120 && !(await getView()).plan; i++) await new Promise((r) => setTimeout(r, 20));
+  let v = await getView();
   assert.equal(v.plan.state, "pending");
 
   // ③ 确认 → 下一拍：spawn 通道真派发（live parent = 属主 agent）
   await tools.get("tm_confirm").execute({ graphId: gid, planId: v.plan.planId }, { agent: owner });
-  await state.beat();
+  await until(() => state.spawnCalls.length > 0);
   assert.equal(state.spawnCalls.length, 1);
   // 任务包携带世代凭据 + 视野最小化（prompt 里无 t-2 的陈述）
   assert.match(state.spawnCalls[0].prompt, /世代 r-/);
@@ -102,35 +107,42 @@ test("宿主装配：工具注册 + 心跳 + spawn 派发 + subagent/end 收卷�
   v = (await tools.get("tm_status").execute({ graphId: gid }, {})).view;
   assert.equal(v.counts.done, 1);
 
-  // ⑤ 级联：下一拍出 t-2 的卡
-  await state.beat();
-  v = (await tools.get("tm_status").execute({ graphId: gid }, {})).view;
+  // ⑤ 级联：下一拍出 t-2 的卡（等新的 pending 卡，旧 confirmed 卡会被顶替）
+  for (let i = 0; i < 200 && (await getView()).plan?.state !== "pending"; i++) await new Promise((r) => setTimeout(r, 20));
+  v = await getView();
   assert.equal(v.plan?.state, "pending");
   assert.equal(v.plan.batch[0].taskId, "t-2");
 });
 
-test("live parent 约束：属主不在场 → spawn 档抛错降级（全挂则回滚+降级）", async () => {
+test("live parent 约束：属主不在场 → spawn 档抛错降级（全挂则回滚+降级）", async (t) => {
   const dir = scratch();
-  writeFileSync(join(dir, "config.yaml"), "enabled: true\nbeatMs: 1000");
+  writeFileSync(join(dir, "config.yaml"), "enabled: true\nbeatMs: 30");
   const { ctx, tools, agents, state } = mockHost(dir);
   const owner = { session: { id: "owner-w1" } };
   // 注意：owner 不在 agents 注册表 = 属主窗口已关
   await apply(ctx, { dataRoot: dir });
+  const until = async (cond: () => boolean, ms = 1500) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 10)); return cond(); };
+  t.after(() => state.effects.forEach((d: any) => d?.()));
   const reg = await tools.get("tm_upsert").execute({ graphYaml: graph() }, { agent: owner });
-  await state.beat();
-  const v = (await tools.get("tm_status").execute({ graphId: reg.graphId })).view;
+  const gv = async () => (await tools.get("tm_status").execute({ graphId: reg.graphId })).view;
+  for (let i = 0; i < 120 && !(await gv()).plan; i++) await new Promise((r) => setTimeout(r, 20));
+  const v = await gv();
   await tools.get("tm_confirm").execute({ graphId: reg.graphId, planId: v.plan.planId }, { agent: owner });
-  const s = await state.beat(); // mock beat 返回 reconciler promise
+  // 真实心跳跑几拍：confirmed → 补投递 → 全挂 → runs/failed 留痕
+  const { existsSync } = await import("node:fs");
+  for (let i = 0; i < 120 && !existsSync(join(dir, "runs", "failed")); i++) await new Promise((r) => setTimeout(r, 20));
   // spawn/startActivation 档抛 no live owner agent → 全挂 → delivery-failed + 降级
   assert.equal(state.spawnCalls.length, 0);
   const reports = (await import("node:fs")).readdirSync(join(dir, "runs", "failed"));
   assert.equal(reports.length, 1);
 });
 
-test("enabled=false：工具注册但零心跳零订阅", async () => {
+test("enabled=false：工具注册但零心跳零订阅", async (t) => {
   const dir = scratch(); // 无 config = 默认关
   const { ctx, tools, state } = mockHost(dir);
   await apply(ctx, { dataRoot: dir });
+  const until = async (cond: () => boolean, ms = 1500) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 10)); return cond(); };
+  t.after(() => state.effects.forEach((d: any) => d?.()));
   assert.ok(tools.has("tm_status")); // 读写照常
-  assert.equal(state.beat, null); // 零心跳
+  assert.equal(state.effects.length, 0); // 零心跳
 });

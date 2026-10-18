@@ -4,6 +4,7 @@
 // 纪律：enabled=false 时零定时器零订阅（读写照常由 tools 直通模块）。
 
 import { join } from "node:path";
+import z from "@deepseek-ai/schemastery";
 import { boot } from "../engine/boot.ts";
 import { TaskmasterTools } from "../tools/tools.ts";
 import { makeChannels } from "./channels.ts";
@@ -13,11 +14,10 @@ import { EventLog } from "../persister/event-log.ts";
 export const name = "taskmaster";
 export const inject = ["tools"];
 
-// 宿主 Config 约定：{ dataRoot?: string }（缺省 <cwd>/.dsh/taskmaster）
-export const Config = {
-  type: "object",
-  properties: { dataRoot: { type: "string" } },
-};
+// 宿主 Config（cordis 用 schemastery schema；缺省 dataRoot = <cwd>/.dsh/taskmaster）
+export const Config = z.object({
+  dataRoot: z.string(),
+});
 
 /**
  * defineTool 解析：宿主挂着 @deepseek-ai/dsh-tools 就用真的（schema 校验/输出规范化），
@@ -91,11 +91,11 @@ export async function apply(ctx, config: any = {}) {
   const beat = () => engine.reconciler.reconcileAll().catch((e) => {
     ctx.logger?.error?.("taskmaster beat failed", e);
   });
-  if (ctx.setInterval) ctx.setInterval(beat, engine.config.beatMs);
-  else {
+  // 心跳定时器：cordis effect 托管清理（fiber dispose 时自动 clear，不依赖 timer 服务）
+  ctx.effect(() => {
     const timer = setInterval(beat, engine.config.beatMs);
-    ctx.on("dispose", () => clearInterval(timer));
-  }
+    return () => clearInterval(timer);
+  }, "taskmaster/heartbeat");
 
   // 事件订阅（真实载荷已核准：subagent/end = { runId, provider, id, local, stopReason, lastAssistantMessage? }，
   // **没有 structured**——结构化捕获在服务内部，不经事件）。

@@ -54,7 +54,7 @@ export class Reconciler {
     if (this.deadlockReported.get(graphId) === hash) return false;
     this.deadlockReported.set(graphId, hash);
     atomicWriteFileSync(
-      join(this.dataRoot, "reports", `${now.toISOString().replaceAll(":", "-")}-deadlock-${graphId}.json`),
+      join(this.dataRoot, "reports", `${now.toISOString().replaceAll(":", "-")}-deadlock-${graphId}-${hash}.json`),
       JSON.stringify(
         { kind: "deadlock", graphId, waiting: waiting.map((w) => ({ taskId: w.task.id, pendingDeps: w.pendingDeps })), at: now.toISOString() },
         null,

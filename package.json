@@ -13,9 +13,12 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5",
     "js-yaml": "^5.5.0"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5",
+    "@deepseek-ai/cordis-plugin-timer": "^1.1.7",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.6.5",
     "typescript": "^7.0.2"
