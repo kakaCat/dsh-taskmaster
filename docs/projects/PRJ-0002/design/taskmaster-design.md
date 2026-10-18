@@ -264,6 +264,11 @@ S2 新增；S1 期用 enabled 开关近似。
 
 内部接口：按优先级探测通道可用性并投递任务包，返回 sessionId + 实际通道；三档全不可用转纯对话流（计划卡由人手工带任务包开工）。CAS 占位先于投递，失败回滚不自动重试。
 
+宿主源码已确认的两个契约（[调研 v0.3](../../research/taskmaster-resident-feasibility.md) E-9）：
+
+- **结果回报**：订阅 `subagent/start` / `subagent/end` 生命周期事件（宿主事件总线），`subagent/end` 携带执行结果——引擎无需身处会话即可收卷；交卷契约借 `request.outputSchema` 结构化输出承载 checks 证据（支撑 FR-6 机械核验）；
+- **父体约束**：spawn / startActivation 两档要求 **exact live parent agent**（否则 UNAUTHORIZED）——属主窗口关闭期间这两档不可用，自动降级 branch 档或排队等属主回来（补投纪律不变）；探活/打回经 `sendMessage` 寻址驻留子会话。
+
 **错误码**
 
 `channel-unavailable`（逐档降级）/ `delivery-failed`（回滚占位、留痕、任务回就绪）。
@@ -288,7 +293,7 @@ S2 新增；S1 期用 enabled 开关近似。
 |---|---|---|---|
 | 价值 | 属主真的愿意过确认闸吗 | 会话原话"自主但不失控"；M1 真实项目 3~5 任务跑通看驳回率（未做） | 部分 |
 | 可用性 | 计划卡/上报/打回的文本交互人会用吗 | PRD 文本交互原型三段；M1 走查脚本 13 步（未跑） | 部分 |
-| 可行性 | 常驻引擎形态建得出来吗 | dsh-schedule 先例（宿主级常驻 + 持久化域 + CAS + 定时自触发 + 重启恢复）；详见[常驻形态可行性调研](../../research/taskmaster-resident-feasibility.md)：D-1 采纳（v0.2：startActivation/spawn 的 service 级可调已由官方文档确认）。注意：goal-round-driver 与本引擎语义不同（会话内续跑 vs 跨执行者派发），不作先例 | 已验证（文档级；残余实现细节 = completion notice 收取机制，M1 #6 第一步确认） |
+| 可行性 | 常驻引擎形态建得出来吗 | dsh-schedule 先例（宿主级常驻 + 持久化域 + CAS + 定时自触发 + 重启恢复）；详见[常驻形态可行性调研](../../research/taskmaster-resident-feasibility.md)：D-1 采纳（v0.2：startActivation/spawn 的 service 级可调已由官方文档确认）。注意：goal-round-driver 与本引擎语义不同（会话内续跑 vs 跨执行者派发），不作先例 | 已验证（源码级：E-9 确认生命周期事件收卷 + live parent 约束已落 IF-8；残余项 = 大图节拍耗时，M1 基准） |
 | 商业可行性 | 成本与合规能接受吗 | 纯本地、零网络；spawn 成本由确认闸+并发上限控制 | 已验证 |
 
 **未验证项的补课计划**：价值与可用性 → M1 走查（2026-11-08 前）看计划卡驳回率（阈值 30%）；可行性 → M1 代码验证宿主插件常驻 + 心跳循环，失败则退回方案 B 并复盘。
@@ -301,7 +306,7 @@ S2 新增；S1 期用 enabled 开关近似。
 | 投递失败 | 通道不可用/超时 | 任务回就绪，计划卡重出 | runs/ 留痕 + 上报 | 人确认下一批计划卡 | 属主 |
 | 执行者卡死 | idle 不交卷 | 一个周期内 stalled 上报 | 三层活性信号 | 人裁（resume/reassign/reopen） | 属主 |
 | 执行者窗口死亡 | 进程消失 | dead 上报；有交卷留痕则补验收 | 进程存活信号 | 人裁 | 属主 |
-| 属主窗口关闭 | 窗口被关 | 计划卡/上报排队，重开补投 | 投递目标探测 | 自动排队补投 | 引擎 |
+| 属主窗口关闭 | 窗口被关 | 计划卡/上报排队；spawn/activation 档不可用（需 live parent），自动降级 branch 档或等重开补投 | 投递目标探测 | 自动降级 + 排队补投 | 引擎 |
 | 死锁 | 就绪集空图未完 | 上报，零动作 | 对账巡检 | 人改图或人裁 | 属主 |
 | state.json 损坏 | 写中断/磁盘错 | 重启时投影重建 | 启动校验 | 快照+事件重放重建 | 引擎 |
 | 台账损坏 | 写中断 | 在途任务寻址丢失 | 启动校验 | 从 runs/ 留痕重建台账；建不全的标 stalled 报人 | 属主 |
