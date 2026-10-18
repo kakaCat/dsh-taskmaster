@@ -21,7 +21,7 @@ updated: 2026-10-18
 ## 背景与来源
 
 - **收集方式**：需求会话多轮收敛（2026-10-18），从"派发盲区"到"driver 形式"到"控制面"到"常驻引擎"到"独立插件"到"全生命周期"逐步收窄。
-- **样本**：单一需求方会话 1 场；参照：K8s controller（reconcile 循环）、Nacos（注册/发现/心跳）、DSH 自带 goal-round-driver（驱动器形态先例）。
+- **样本**：单一需求方会话 1 场；参照：K8s controller（reconcile 循环）、Nacos（注册/发现/心跳）、DSH 自带 dsh-schedule（宿主级常驻服务先例：自管持久化域 + 定时自触发 + 重启恢复）。
 - **排重结论**：DSH 已有 `@deepseek-ai/dsh-schedule`/`dsh-tool-schedule` 是**定时提醒**（cron 闹钟，按时间调度），Taskmaster 是**按依赖顺序调度 agent 任务**，零重叠。
 - **架构原则（二轮收敛）**：引擎与执行者**身份独立**——引擎不依赖 agent 的身份与能力，agent 不知道引擎存在；两边只有三个接触面：任务包（视野最小化 + runId 世代凭据）、交卷（凭据 + checks 证据）、只读活性观察。引擎持有的是每个在途 run 的可达地址（绑定台账），不是执行者注册表。
 - **原始记录**：[ADR-0001](../../adr/0001-scheduler-as-standalone-plugin.md)、[atomize-design.md](../../PRJ-0001/design/atomize-design.md)（引擎设计暂寄于此，PRJ-0002 设计文档待补）。
@@ -53,7 +53,7 @@ updated: 2026-10-18
 | 假设 | 如果错了会怎样 | 证伪方式 | 结论 |
 |---|---|---|---|
 | 人愿意过确认闸（看计划卡点确认） | 闸太烦 → 需扩大 gate=auto 面 | M1 在 3~5 任务真实项目跑通，看驳回率 | 未验证 |
-| host 插件级常驻引擎可行（goal-round-driver 先例） | 引擎形态不成立，退回纯工具 | M1 代码验证（语义层面已验证） | 未验证 |
+| host 插件级常驻引擎可行（dsh-schedule 先例） | 引擎形态不成立，退回纯工具 | 已有[调研结论](../../../research/taskmaster-resident-feasibility.md)：有条件采纳；剩余条件（spawn service 级调用面）随 M1 #6 验证 | 部分 |
 | 探活三层信号足以判定卡死 | stalled 误判/漏判 | S2 卡死注入测试 | 未验证 |
 | 单次 spawn 成本可被确认闸控制 | 派发爆炸烧算力 | 计划卡全量曝光 + 并发上限 | 部分成立 |
 
