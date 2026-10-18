@@ -36,7 +36,7 @@ export class Monitor {
    * 单图巡检：对每条活跃绑定评估活性。
    * @returns Array<{ taskId, liveness: "alive"|"silent"|"stalled"|"dead" }>
    */
-  sweep(graphId, now = new Date()) {
+  async sweep(graphId, now = new Date()) {
     const events = this.#eventLog(graphId);
     const results: any[] = [];
     for (const b of this.binder.byGraph(graphId)) {
@@ -56,13 +56,27 @@ export class Monitor {
         results.push({ taskId: b.taskId, liveness: "alive" });
         continue;
       }
-      // 无增长：按沉默时长分级
+      // 无增长：按沉默时长分级（S2：silent → 主动探活一次 → 仍沉默 → stalled）
       const lastAt = Date.parse(b.lastActivityAt ?? b.startedAt);
       const silentFor = now.getTime() - lastAt;
       if (silentFor > this.silentMs) {
-        this.#mark(b, "stalled", events, now);
-        results.push({ taskId: b.taskId, liveness: "stalled" });
+        if (!b.probedAt) {
+          // 本轮沉默尚未探活：主动探活一次（消息经宿主 sendMessage 寻址）
+          b.probedAt = now.toISOString();
+          try {
+            await this.adapters.probe?.(b.sessionId);
+          } catch {
+            /* 探活失败不抛：仍沉默下拍判 stalled */
+          }
+          this.binder.markLiveness(b.taskId, { liveness: "silent" });
+          events.append("probe", { taskId: b.taskId, runId: b.runId, sessionId: b.sessionId });
+          results.push({ taskId: b.taskId, liveness: "silent", probed: true });
+        } else {
+          this.#mark(b, "stalled", events, now);
+          results.push({ taskId: b.taskId, liveness: "stalled" });
+        }
       } else {
+        b.probedAt = undefined; // 有活动迹象（回到 TTL 内）→ 探活回合重置
         this.binder.markLiveness(b.taskId, { liveness: "silent" });
         results.push({ taskId: b.taskId, liveness: "silent" });
       }

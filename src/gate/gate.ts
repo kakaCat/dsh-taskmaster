@@ -94,7 +94,7 @@ export class Gate {
    * @param ready 全部就绪任务（卡上展示冲突用）
    * @returns {{ card, isNew, autoConfirmed }}
    */
-  offer({ graphId, graphVersion, ready, batch, concurrency = 1, autoFacets = [] }: { graphId: string; graphVersion: number; ready: Task[]; batch: Task[]; concurrency?: number; autoFacets?: string[] }, now: Date = new Date()) {
+  offer({ graphId, graphVersion, ready, batch, concurrency = 1, autoFacets = [], conflicts }: { graphId: string; graphVersion: number; ready: Task[]; batch: Task[]; concurrency?: number; autoFacets?: string[]; conflicts?: Task[] }, now: Date = new Date()) {
     const hash = readyHashOf({
       graphVersion,
       readyIds: ready.map((t) => t.id),
@@ -127,7 +127,10 @@ export class Gate {
       readyHash: hash,
       batch: batch.map((t) => ({ taskId: t.id, statement: t.statement })),
       readyCount: ready.length,
-      conflicts: writeScopeConflicts(ready),
+      conflicts:
+        conflicts && conflicts.length > 0
+          ? conflicts.map((t) => ({ tasks: [t.id], scopes: t.writeScopes ?? [] }))
+          : writeScopeConflicts(ready),
       concurrency,
       state: "pending",
       createdAt: now.toISOString(),

@@ -186,6 +186,24 @@ function registerTools(ctx, engineOf, defineTool) {
   });
 
   reg({
+    name: "tm_engine_stop",
+    description: "引擎级停止（运行态）：心跳停/零派发零探活；在途不杀、台账保留；重启或 tm_engine_start 恢复",
+    parameters: {},
+    async execute() {
+      return tm().engineCtl({ action: "stop" });
+    },
+  });
+
+  reg({
+    name: "tm_engine_start",
+    description: "引擎级恢复（运行态）：下一拍对账接管在途（等效 Boot ④ 重挂）",
+    parameters: {},
+    async execute() {
+      return tm().engineCtl({ action: "start" });
+    },
+  });
+
+  reg({
     name: "tm_task_action",
     description: "任务级人裁：resume/reassign/reopen（签发新世代，引擎自身调不到这里）",
     parameters: {

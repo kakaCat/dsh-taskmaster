@@ -74,7 +74,7 @@ export async function boot(dataRoot, { channels = {}, adapters = {}, notifier = 
   const deliverer = new Deliverer(dataRoot, { channels, binder });
   const acceptor = new Acceptor(dataRoot, { binder, cwd: cwd ?? dataRoot, notifier });
   const monitor = new Monitor(dataRoot, { binder, adapters, silentMs: config.silentMs });
-  const reconciler = new Reconciler(dataRoot, { store, binder, gate, deliverer, monitor, autoFacets: config.autoFacets, guard });
+  const reconciler = new Reconciler(dataRoot, { store, binder, gate, deliverer, monitor, autoFacets: config.autoFacets, guard, concurrency: config.concurrency });
   const ctl = new GraphCtl(dataRoot, { store, binder });
 
   // ④ 在途逐 run 处置

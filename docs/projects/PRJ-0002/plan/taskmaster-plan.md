@@ -69,3 +69,4 @@ updated: 2026-10-18
 - v0.3（2026-10-19 凌晨二轮）：宿主集成落地（90/90）：cordis 插件装配 `src/host/plugin.js`（心跳定时器 + subagent 生命周期事件订阅 + 六个 tm_* 工具）、通道适配器（ctx.subagents.startActivation，live parent = 属主 agent 约束真实兑现）、信号适配器（活性计数/进程存活）、runId 世代先于投递签发（任务包携带凭据）。**Mock 宿主（cordis 形状）全链路测试通过**；剩余 = 真 cordis 宿主联调（Config schema/Service 生命周期/真实 startActivation 请求契约/subagent/end 消息形状），属联调验证不属编码。
 
 - v0.4（2026-10-19）：工程化补齐——全量迁移 TypeScript（src 25 文件 / test 15 文件，Node 24 原生 type-stripping 直跑零构建）；新增 src/types.ts 领域类型；`tsc --noEmit` 零错误。**迁移期欠账**：`noImplicitAny` 暂关（动态 JSON/YAML 边界仍用 any），后续逐模块收紧；真宿主联调与 S2 不受影响。
+- v0.5（2026-10-19）：S2 四个工作项落地（94/94 + tsc 0）：#15 写域裁决与并行批（`arbitrate` 先到先得 + 并发槽，config.concurrency 1~16）、#16 主动探活（silent 超 TTL 先探活一次，仍沉默下拍 stalled；probe 经宿主寻址）、#17 死锁巡检上报抽为可测方法（等待集哈希去重）、#18 引擎级停止/恢复（IF-7：tm_engine_stop/tm_engine_start，在途不杀、台账保留）。S2 出口：卡死/死锁注入测试与并行冲突计划卡均已覆盖（test/s2.test.ts、monitor.test.ts）。

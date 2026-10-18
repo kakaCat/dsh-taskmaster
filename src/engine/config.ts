@@ -9,14 +9,14 @@ export const DEFAULT_CONFIG = {
   enabled: false, // 总开关：缺省关闭（NFR-3）
   beatMs: 5_000, // 心跳节拍（全局默认；钳制见下）
   silentMs: 90_000, // 探活 TTL：沉默超此 → stalled
-  concurrency: 1, // S1 固定 1（串行派发）
+  concurrency: 1, // 缺省串行；S2 可配 1~16
   autoFacets: [], // gate=auto 里程碑切面
 };
 
 const LIMITS = {
   beatMs: [1_000, 300_000], // 上下限钳制：1s ~ 5min
   silentMs: [10_000, 3_600_000],
-  concurrency: [1, 1], // S1 锁死 1，S2 放开
+  concurrency: [1, 16], // S2：并行上限可配（宿主 maxActiveSubagents=8，叠加生效）
 };
 
 export function loadConfig(dataRoot) {

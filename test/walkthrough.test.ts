@@ -50,7 +50,8 @@ test("M1 走查：注册→确认→派发→卡死→人裁→打回→补齐�
   const runId1 = v.inFlight[0].runId;
 
    // ④ 模拟卡死：无信号增长超 TTL（60s）→ stalled 报人
-  await beat(100_000); // startedAt=T0+20s → 沉默 80s > TTL
+  await beat(100_000); // startedAt=T0+20s → 沉默 80s > TTL → 探活
+  await beat(105_000); // 探活后仍沉默 → stalled
   v = await status();
   assert.equal(v.inFlight[0].liveness, "stalled");
   assert.ok(readdirSync(join(dir, "reports")).some((f) => f.includes("stalled")));

@@ -11,7 +11,8 @@ import { createHash } from "node:crypto";
 import { readProjection, casWriteProjection } from "../persister/projection-store.ts";
 import { atomicWriteFileSync } from "../persister/atomic-write.ts";
 import { EventLog } from "../persister/event-log.ts";
-import { computeReady, selectBatch, isDeadlocked, isComplete, dispatchableTasks } from "../scheduler/scheduler.ts";
+import { computeReady, arbitrate, isDeadlocked, isComplete, dispatchableTasks } from "../scheduler/scheduler.ts";
+import type { Task } from "../types.ts";
 import { DeliveryFailedError } from "../deliverer/deliverer.ts";
 
 const IN_FLIGHT = new Set(["dispatching", "running"]);
@@ -24,13 +25,14 @@ export class Reconciler {
   deliverer: any;
   monitor: any;
   autoFacets: string[];
+  concurrency: number;
   guard: any;
   deadlockReported: Map<string,string>;
   /**
    * @param dataRoot 数据根
    * @param deps { store: GraphStore, binder: Binder, gate: Gate, deliverer: Deliverer, monitor: Monitor, autoFacets?: string[] }
    */
-  constructor(dataRoot, { store, binder, gate, deliverer, monitor, autoFacets = [], guard = null }: any) {
+  constructor(dataRoot, { store, binder, gate, deliverer, monitor, autoFacets = [], guard = null, concurrency = 1 }: any) {
     this.dataRoot = dataRoot;
     this.store = store;
     this.binder = binder;
@@ -39,7 +41,28 @@ export class Reconciler {
     this.monitor = monitor;
     this.autoFacets = autoFacets;
     this.guard = guard; // null = 宽松（测试/独立使用）；引擎装配必带（#13）
+    this.concurrency = concurrency; // S2 并行上限（1 = 串行）
     this.deadlockReported = new Map(); // graphId → waiting 集哈希（去重，重启后重复报一次可接受）
+  }
+
+  /**
+   * 死锁上报（S2 #17）：等待集哈希去重——同一等待集只报一次；只报不修。
+   * @returns 是否为本次新报（false = 已报过，静默）
+   */
+  reportDeadlock(graphId: string, waiting: Array<{ task: Task; pendingDeps: string[] }>, now: Date = new Date()): boolean {
+    const hash = createHash("sha1").update(waiting.map((w) => w.task.id).sort().join(",")).digest("hex").slice(0, 12);
+    if (this.deadlockReported.get(graphId) === hash) return false;
+    this.deadlockReported.set(graphId, hash);
+    atomicWriteFileSync(
+      join(this.dataRoot, "reports", `${now.toISOString().replaceAll(":", "-")}-deadlock-${graphId}.json`),
+      JSON.stringify(
+        { kind: "deadlock", graphId, waiting: waiting.map((w) => ({ taskId: w.task.id, pendingDeps: w.pendingDeps })), at: now.toISOString() },
+        null,
+        2,
+      ),
+    );
+    this.#eventLog(graphId).append("deadlock", { waiting: waiting.map((w) => w.task.id) });
+    return true;
   }
 
   #eventLog(graphId) {
@@ -112,7 +135,7 @@ export class Reconciler {
     }
 
     // ② 在途探活（paused/stopping 也照做——R-17/R-18 暂停停止不停盯）
-    const liveness = this.monitor.sweep(graphId, now);
+    const liveness = await this.monitor.sweep(graphId, now);
     if (liveness.length > 0) summary.liveness = liveness;
 
     // ③ 状态分流
@@ -184,23 +207,7 @@ export class Reconciler {
     const dispatchable = dispatchableTasks(graph, statusMap);
     if (dispatchable.length === 0) {
       if (isDeadlocked(readyInfo)) {
-        const hash = createHash("sha1")
-          .update(readyInfo.waiting.map((w) => w.task.id).sort().join(","))
-          .digest("hex")
-          .slice(0, 12);
-        if (this.deadlockReported.get(graphId) !== hash) {
-          this.deadlockReported.set(graphId, hash);
-          atomicWriteFileSync(
-            join(this.dataRoot, "reports", `${now.toISOString().replaceAll(":", "-")}-deadlock-${graphId}.json`),
-            JSON.stringify(
-              { kind: "deadlock", graphId, waiting: readyInfo.waiting.map((w) => ({ taskId: w.task.id, pendingDeps: w.pendingDeps })), at: now.toISOString() },
-              null,
-              2,
-            ),
-          );
-          events.append("deadlock", { waiting: readyInfo.waiting.map((w) => w.task.id) });
-          summary.actions.push("deadlock-reported");
-        }
+        if (this.reportDeadlock(graphId, readyInfo.waiting, now)) summary.actions.push("deadlock-reported");
       }
       return summary;
     }
@@ -210,9 +217,16 @@ export class Reconciler {
     if (cardNow?.state === "pending") return summary;
 
     // 出/更新计划卡（口径与 confirm 端一致：dispatchable）
-    const batch = selectBatch(dispatchable, { limit: 1 }); // S1 串行
+    // S2：写域裁决 + 并发槽（concurrency 来自配置；在途数从投影算）
+    const concurrency = this.concurrency;
+    const inFlightCount = Object.values(statusMap).filter((e: any) => IN_FLIGHT.has(e.status)).length;
+    const { batch, conflicts } = arbitrate(dispatchable, { concurrency, inFlightCount });
+    if (batch.length === 0) {
+      if (conflicts.length > 0) summary.actions.push("all-conflicted");
+      return summary;
+    }
     const offered = this.gate.offer(
-      { graphId, graphVersion: meta.activeVersion, ready: dispatchable, batch, concurrency: 1, autoFacets: this.autoFacets },
+      { graphId, graphVersion: meta.activeVersion, ready: dispatchable, batch, concurrency, autoFacets: this.autoFacets, conflicts },
       now,
     );
     if (offered.suppressedByReject) {
@@ -225,15 +239,17 @@ export class Reconciler {
         summary.actions.push("dispatch-skipped-degraded");
         return summary;
       }
-      const task = batch[0];
-      try {
-        const r = await this.deliverer.deliver({ graphId, graphVersion: meta.activeVersion, graph, task }, now);
-        summary.actions.push(`delivered:${task.id}:${r.runId}`);
-      } catch (e: any) {
-        if (e instanceof DeliveryFailedError) {
-          this.guard?.markDegraded("all-channels-down");
-          summary.actions.push(`delivery-failed:${task.id}`);
-        } else throw e;
+      for (const task of batch) {
+        try {
+          const r = await this.deliverer.deliver({ graphId, graphVersion: meta.activeVersion, graph, task }, now);
+          summary.actions.push(`delivered:${task.id}:${r.runId}`);
+        } catch (e: any) {
+          if (e instanceof DeliveryFailedError) {
+            this.guard?.markDegraded("all-channels-down");
+            summary.actions.push(`delivery-failed:${task.id}`);
+            break; // 执行面不可用：本批停止尝试，剩余任务留在就绪集
+          } else throw e;
+        }
       }
       return summary;
     }

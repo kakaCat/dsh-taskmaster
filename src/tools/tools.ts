@@ -76,6 +76,21 @@ export class TaskmasterTools {
     return { ok: true, view: st.status({ graphId, groupBy, taskId }) };
   });
 
+  /** IF-7 引擎级停止/启动（S2）：运行态开关，不落盘（重启即按 Boot 恢复） */
+  engineCtl = this.#wrap(async ({ action, actor }: any = {}) => {
+    const guard = this.e.guard;
+    if (!guard) return { ok: false, code: "no-engine", message: "引擎未启用（enabled=false）" };
+    if (action === "stop") {
+      guard.stop();
+      return { ok: true, stopped: true, note: "心跳已停：零派发零探活；在途不杀、台账保留；tm_engine_start 或重启恢复" };
+    }
+    if (action === "start") {
+      guard.start();
+      return { ok: true, stopped: false, note: "恢复：下一拍对账接管在途（等效 Boot ④ 重挂）" };
+    }
+    return { ok: false, code: "bad-action", message: `未知动作 ${action}（可选 stop/start）` };
+  });
+
   /** IF-5 图级反向控制（人裁：暂停/恢复/停止/注销） */
   graphCtl = this.#wrap(async ({ graphId, action, confirm, actor }) => {
     const fn = { pause: "pause", resume: "resume", stop: "stop", deregister: "deregister" }[action];

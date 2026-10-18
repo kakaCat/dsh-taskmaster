@@ -13,6 +13,7 @@ export class EngineGuard {
   degraded: boolean;
   degradedReason: string | null;
   degradedAt: string | null = null;
+  stopped = false; // 运行态停止（S2 IF-7）：心跳停、零派发零探活、在途不杀、台账保留
   constructor(dataRoot) {
     this.dataRoot = dataRoot;
     this.degraded = false;
@@ -28,14 +29,24 @@ export class EngineGuard {
     return this.config.enabled;
   }
 
-  /** 探活许可：只跟总开关 */
+  /** 探活许可：总开关 + 未运行态停止 */
   allowMonitor() {
-    return this.enabled;
+    return this.enabled && !this.stopped;
   }
 
-  /** 派发许可：总开关 + 未降级 */
+  /** 派发许可：总开关 + 未降级 + 未停止 */
   allowDispatch() {
-    return this.enabled && !this.degraded;
+    return this.enabled && !this.degraded && !this.stopped;
+  }
+
+  /** 运行态停止（IF-7）：心跳停/零派发零探活；在途不杀、台账保留；再启动走 Boot ④重挂 */
+  stop() {
+    this.stopped = true;
+  }
+
+  /** 运行态恢复：与 Boot ④等效——在途绑定由下一拍对账重挂 */
+  start() {
+    this.stopped = false;
   }
 
   /** 标降级（幂等：已降级不重复记） */

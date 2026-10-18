@@ -58,6 +58,7 @@ export interface BindingRecord {
   lastEventSeq: number;
   liveness?: Liveness;
   lastActivityAt?: string;
+  probedAt?: string; // 本轮沉默的主动探活时刻（S2）
   closedAt?: string;
   outcome?: string | null;
 }

@@ -51,6 +51,36 @@ export function selectBatch(ready: Task[], { limit = 1 }: { limit?: number } = {
   return ready.slice(0, limit);
 }
 
+/** 写域重叠：前缀相交即冲突 */
+function overlaps(a: string, b: string): boolean {
+  return a.startsWith(b) || b.startsWith(a);
+}
+
+/**
+ * 写域裁决（S2 #15）：从就绪集贪心挑批——按图声明序，写域与已选批次重叠的跳过（先到者放行），
+ * 并发槽 = concurrency - 在途数。
+ * @returns { batch, conflicts: 因写域重叠被跳过的任务 }
+ */
+export function arbitrate(
+  ready: Task[],
+  { concurrency = 1, inFlightCount = 0 }: { concurrency?: number; inFlightCount?: number } = {},
+): { batch: Task[]; conflicts: Task[] } {
+  const slots = Math.max(0, concurrency - inFlightCount);
+  const batch: Task[] = [];
+  const conflicts: Task[] = [];
+  for (const task of ready) {
+    if (batch.length >= slots) break;
+    const scopes = task.writeScopes ?? [];
+    const clash = batch.some((t) => (t.writeScopes ?? []).some((a) => scopes.some((b) => overlaps(a, b))));
+    if (clash) {
+      conflicts.push(task); // 先到先得：本批已有人在写重叠域
+      continue;
+    }
+    batch.push(task);
+  }
+  return { batch, conflicts };
+}
+
 /**
  * 死锁嗅探（S2 #17 的完整巡检在此之前先用这个原始判据）：
  * 就绪集空 + 没在途 + 图未完 = 死锁。
