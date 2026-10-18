@@ -135,8 +135,9 @@ export class GraphStore {
   /**
    * 生命周期迁移（唯一写口）。非法迁移抛 bad-transition。
    * 引擎内部迁移（active→asleep、stopping→stopped）与人裁操作（#10）都走这里。
+   * @param actor 操作者（人裁留痕；引擎内部迁移写 "engine"）
    */
-  setLifecycle(graphId, next) {
+  setLifecycle(graphId, next, { actor = "engine" } = {}) {
     const metaPath = this.metaPath(graphId);
     const current = readProjection(metaPath);
     if (current.data === null) throw new GraphNotFoundError(graphId);
@@ -147,7 +148,7 @@ export class GraphStore {
       lifecycle: next,
       updatedAt: new Date().toISOString(),
     });
-    this.eventLog(graphId).append(`graph-${next}`, { graphId, from });
+    this.eventLog(graphId).append(`graph-${next}`, { graphId, from, actor });
     return { from, to: next };
   }
 }

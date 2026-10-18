@@ -1,6 +1,6 @@
 // dsh-taskmaster 插件入口（S1 施工中）。
-// 已完成：#1~#8 + #9 reconciler（常驻对账循环：漂移修复→探活→状态分流→确认/出卡）。
-// 待续：graph lifecycle(#10) → Boot(#11) → statuser(#12) → …
+// 已完成：#1~#9 + #10 graph-ctl（人裁暂停/恢复/停止/注销）。
+// 待续：Boot(#11) → statuser(#12) → 开关降级(#13) → tm_* 工具面(#14)。
 // 施工序与出口判据见 docs/projects/PRJ-0002/plan/taskmaster-plan.md。
 
 export { atomicWriteFileSync } from "./persister/atomic-write.js";
@@ -16,3 +16,4 @@ export { Deliverer, DeliveryFailedError, DeliveryConflictError, assemblePackage,
 export { Acceptor, EvidenceInsufficientError, NotRunningError } from "./acceptor/acceptor.js";
 export { Monitor } from "./monitor/monitor.js";
 export { Reconciler } from "./reconciler/reconciler.js";
+export { GraphCtl, ConfirmRequiredError } from "./lifecycle/graph-ctl.js";
