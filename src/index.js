@@ -1,6 +1,6 @@
 // dsh-taskmaster 插件入口（S1 施工中）。
-// 已完成：#1 persister、#2 graph-store、#3 binder、#4 scheduler、#5 gate、#6 deliverer。
-// 待续：acceptor(#7) → monitor(#8) → reconciler(#9) → …
+// 已完成：#1 persister、#2 graph-store、#3 binder、#4 scheduler、#5 gate、#6 deliverer、#7 acceptor。
+// 待续：monitor(#8) → reconciler(#9) → graph lifecycle(#10) → …
 // 施工序与出口判据见 docs/projects/PRJ-0002/plan/taskmaster-plan.md。
 
 export { atomicWriteFileSync } from "./persister/atomic-write.js";
@@ -13,3 +13,4 @@ export { Binder, BindingConflictError, StaleRunError } from "./binder/binder.js"
 export { computeReady, selectBatch, isDeadlocked, isComplete } from "./scheduler/scheduler.js";
 export { Gate, PlanStaleError, PlanNotPendingError, readyHashOf, writeScopeConflicts } from "./gate/gate.js";
 export { Deliverer, DeliveryFailedError, DeliveryConflictError, assemblePackage, CHANNEL_ORDER } from "./deliverer/deliverer.js";
+export { Acceptor, EvidenceInsufficientError, NotRunningError } from "./acceptor/acceptor.js";
