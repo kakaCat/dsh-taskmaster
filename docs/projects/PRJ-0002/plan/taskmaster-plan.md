@@ -56,7 +56,7 @@ updated: 2026-10-18
 | 风险/卡点 | 等谁 | 预案 |
 |---|---|---|
 | 4 条开放问题未裁决 | S0 评审（2026-10-25） | 评审现场逐条过，当场定 |
-| 宿主插件常驻形态 | ~~未验证~~ 已有调研结论（[research](../../research/taskmaster-resident-feasibility.md)：有条件采纳） | 剩余条件 = spawn 包 service 级调用面确认，并入 S1 #6 开工第一步（0.5 人日）；失败则 IF-8 改间接路径 |
+| 宿主插件常驻形态 | 已有调研结论（[research](../../research/taskmaster-resident-feasibility.md)：D-1 采纳，通道三档闭合） | 残余细节 = completion notice 收取机制，随 S1 #6 开工第一步确认（0.5 人日）；失败仅改 IF-8 回报路径，不动形态 |
 | 活性 TTL 误判 | S2 #16 | 三层信号互相印证，注 EntryPoint 入测试调参 |
 | owner/reviewers 未定 | 需求方 | S0 前指定 |
 

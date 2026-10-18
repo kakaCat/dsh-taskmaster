@@ -14,8 +14,8 @@ updated: 2026-10-18
 
 - **调研问题**：Taskmaster 设计的「宿主插件级常驻引擎 + 心跳对账 + 持久化纪律 + 执行面投递」四个形态前提，在 DSH 现行架构（0.2.1-rc.2）下有没有生产级先例支撑？
 - **办法**：源码与官方 README 研读，覆盖宿主运行时全部 307 个 @deepseek-ai 包，重点解剖先例包 dsh-schedule 全文（dsh-goal-round-driver 作为反面对照）+ 4 个底座包；时间窗 2026-10-18 单日。
-- **结论**：D-1 **有条件采纳**——常驻形态、定时自触发、重启存活、CAS 纪律、spawn 投递通道均有 dsh-schedule 等先例；唯一缺口是 startActivation 通道语义未确认（见 Q-4）。
-- **证据强度**：A 级 5 条、B 级 1 条；最大信息缺口：startActivation 通道的存在与语义。
+- **结论**：D-1 **采纳**（v0.2：原"有条件采纳"的两个条件已闭合——startActivation 存在且为 service 级 API、spawn 经 dsh-subagent service 直连可调，见 E-7/E-8）。
+- **证据强度**：A 级 7 条、B 级 1 条；最大信息缺口已闭合，残余项为实现细节（completion notice 的非 agent 调用方收取机制）。
 - **这份调研不能用来决定什么**：不覆盖性能量级（节拍耗时、事件流体积）与多写者协同——前者留给 M1 基准，后者已显式排除在二期。
 
 ## 背景与调研问题  serves: 全文
@@ -97,11 +97,11 @@ D-1。三档都在 → 降级链成立；缺档 → 修 IF-8（删档或换档�
 
 **调研与证据**
 
-E-5（dsh-subagent-spawn-in-process 与 dsh-subagent-fork-in-process 包存在于宿主依赖——spawnTeammate 通道的底座）、E-6（本运行时工具面实测可见 window_open / window_dispatch / window_send / spawn_teammate——branch 与 spawn 两档在工具层可用）。**缺口**：startActivation 未在 307 个包名与本运行时工具面中找到对应物，语义未确认。
+E-5（dsh-subagent-spawn-in-process 与 dsh-subagent-fork-in-process 包存在——spawnTeammate 通道的底座）、E-7（dsh-tool-subagent README：委派工具就是调 `ctx.subagents.startActivation()`——**startActivation 存在，且是 subagent service 的 service 级方法**，非工具私有；runtime 托管启动取消/执行/结果上报/清理）、E-8（dsh-subagent README：本包是"每次委派共享的契约"service，明文写 "Direct service callers continue to supply their own optional request depth"——**service 级调用面官方确认**；另发现宿主自带并发预算 `maxActiveSubagents` 默认 8，驻留子会话可再收发消息且不重复占槽——探活/打回寻址的宿主支持）、E-6（本运行时工具面实测可见 window_open / window_dispatch / window_send / spawn_teammate——branch 与 spawn 两档在工具层可用）。四条合起来：三档通道全部闭合——startActivation 与 spawn 为 service 级可调，branch 有工具层实测。**v0.1 的缺口（startActivation 未找到）已闭合。**
 
 **反证与限定条件**
 
-- 包名存在 ≠ 接口语义符合（如 spawn 的参数面、回合预算传递方式）——M1 工作项 #6 开工时需读 dsh-subagent-spawn-in-process 源码确认；本报告只确认到"通道底座存在"这一层。
+- 残余细节：completion notice 如何到达非 agent 调用方（引擎不是会话里的 agent）——README 写 "collect managed activation results"，具体机制留给 M1 #6 读 lib 源码确认；这只影响 IF-8 回报路径的实现，不影响形态结论。
 
 ## 调研方法与范围界定  serves: 全文
 
@@ -124,7 +124,7 @@ E-5（dsh-subagent-spawn-in-process 与 dsh-subagent-fork-in-process 包存在�
 
 **当前建议**
 
-**有条件采纳**：按常驻形态开工。依据 E-1/E-2/E-4/E-5——常驻、自主续跑、持久化纪律、spawn 通道四段各有生产先例，无需发明新宿主能力。条件：M1 工作项 #6 开工时先读 spawn 包源码确认接口语义，并在降级链中暂缓 startActivation 一档（缺证据，见 Q-4），若确认不存在则从 IF-8 移除该档。建议翻转条件：读源码发现 spawn 包不暴露 service 级调用面（只给工具层），则投递通道需改走"引擎→工具调用"的间接路径，IF-8 重写但形态结论不变。
+**采纳**：按常驻形态开工。依据 E-2/E-3/E-4/E-5/E-7/E-8——常驻、定时自触发、持久化纪律、投递三通道全部有生产先例或官方确认的 service 级 API，无需发明新宿主能力。v0.1 的两个保留条件（spawn service 级调用面、startActivation 存在性）已于 v0.2 用 E-7/E-8 闭合。翻转条件：M1 #6 读 lib 源码时发现 completion notice 无法到达非 agent 调用方，则 IF-8 回报路径改轮询留痕，形态结论仍不变。
 
 ## 证据索引  serves: 全文
 
@@ -136,6 +136,8 @@ E-5（dsh-subagent-spawn-in-process 与 dsh-subagent-fork-in-process 包存在�
 | E-4 | dsh-atomic-write 包存在于宿主依赖——原子写底座现成 | A | `node_modules/@deepseek-ai/dsh-atomic-write`（2026-10-18） |
 | E-5 | dsh-subagent-spawn-in-process / dsh-subagent-fork-in-process 包存在——spawn 通道底座现成 | A | `node_modules/@deepseek-ai/dsh-subagent-*`（2026-10-18） |
 | E-6 | 本运行时工具面实测含 window_open/window_dispatch/window_send/spawn_teammate——branch 与 spawn 两档通道在工具层可用 | B | 本会话工具清单（2026-10-18）；复现：任意会话查看自身工具列表 |
+| E-7 | dsh-tool-subagent README：委派工具调用 `ctx.subagents.startActivation()`；runtime 托管启动取消/执行/结果上报/清理；启动失败为工具错误结果，发布后失败经 completion notice 到达 | A | `node_modules/@deepseek-ai/dsh-tool-subagent/README.md` L96（2026-10-18） |
+| E-8 | dsh-subagent README：本包是委派共享契约 service；"Direct service callers continue to supply their own optional request depth"（service 级调用面官方确认）；`maxActiveSubagents` 默认 8（宿主并发预算）；驻留子会话再收发消息不重复占槽 | A | `node_modules/@deepseek-ai/dsh-subagent/README.md` L12/L49/L53（2026-10-18） |
 
 ## 关键发现  serves: Q-1、Q-2、Q-3、Q-4
 
@@ -144,9 +146,10 @@ E-5（dsh-subagent-spawn-in-process 与 dsh-subagent-fork-in-process 包存在�
 | F-1 | 宿主级常驻 + 自管持久化域 + 重启恢复，有完整生产先例（schedule） | E-2 | 事实 | 高 |
 | F-2 | 定时自触发 + 无人投递有生产先例（schedule 单 Host timer 到点自查、批量投递、冷会话恢复） | E-2 | 事实 | 高 |
 | F-3 | 版本域/FIFO/CAS/原子写四项持久化机制全部有先例或现成包 | E-2、E-4 | 事实 | 高 |
-| F-4 | 投递通道 spawn/branch 有底座；startActivation 未找到 | E-5、E-6 | 事实（含缺口） | 高 |
+| F-4 | 投递三通道全部闭合：startActivation 与 spawn 为 service 级 API（官方文档确认），branch 有工具层实测 | E-5、E-6、E-7、E-8 | 事实 | 高 |
 | F-5 | schedule 坦承崩溃窗口可致重复投递——反过来证明我们 CAS 占位 + 世代凭据的必要性 | E-2 | 推断 | 中 |
 | F-6 | goal-round-driver 与 Taskmaster 语义不同（会话内续跑 vs 跨执行者派发），不能作先例；仅其 armed/disarmed 授权纪律可参考 | E-1 | 事实 | 高 |
+| F-7 | 宿主自带并发预算（maxActiveSubagents 默认 8）与驻留子会话消息机制——引擎并发上限是与宿主预算叠加而非替代；探活/打回有宿主消息通道支撑 | E-8 | 事实 | 高 |
 
 ### 与直觉相反的地方
 
@@ -165,7 +168,7 @@ E-5（dsh-subagent-spawn-in-process 与 dsh-subagent-fork-in-process 包存在�
 
 | 决策编号 | 结论 | 立场 | 成立条件 | 翻转条件 |
 |---|---|---|---|---|
-| D-1 | S1 按常驻宿主引擎形态开工；persister 按 schedule 先例组装（版本域+FIFO+CAS+原子写）；投递降级链暂缓 startActivation 档 | 有条件采纳 | spawn 包源码确认 service 级可调（M1 #6 开工时验证，0.5 人日） | spawn 只暴露工具层 → IF-8 改间接路径；心跳实测超节拍预算 → 节拍/TTL 重议 |
+| D-1 | S1 按常驻宿主引擎形态开工；persister 按 schedule 先例组装（版本域+FIFO+CAS+原子写）；投递降级链三档保留（startActivation → branch → spawn → 纯对话流） | 采纳 | 三通道 service 级可调已确认（E-7/E-8）；剩余实现细节不威胁形态 | M1 #6 发现 completion notice 无法到达非 agent 调用方 → IF-8 回报路径改轮询留痕（形态不变）；心跳实测超节拍预算 → 节拍/TTL 重议 |
 
 **不采纳的方案与理由**
 
@@ -176,24 +179,25 @@ E-5（dsh-subagent-spawn-in-process 与 dsh-subagent-fork-in-process 包存在�
 
 **最危险假设**（如果它错了，上面哪条结论直接作废）
 
-- 「spawn 包暴露 service 级调用面」：错了则 IF-8 降级链首档不成立，引擎无法自主派发，常驻形态空心化——D-1 翻转。证伪方式：读 dsh-subagent-spawn-in-process 源码（0.5 人日，M1 #6 开工第一步）。
+- ~~「spawn 包暴露 service 级调用面」~~（v0.2 已闭合：E-8 官方文档明文确认 direct service callers）。现任最危险假设：「completion notice 能到达非 agent 调用方」——引擎不是会话里的 agent，若结果回报只走会话内通知，引擎收不到交卷事件，只能靠轮询留痕兜底（IF-8 改回报路径，D-1 不翻转但 M1 #6 工作量 +1 人日）。证伪方式：读 dsh-subagent lib 源码确认 "collect managed activation results" 机制（0.5 人日，M1 #6 第一步）。
 
 | 信息缺口 | 影响哪个结论 | 获取成本 | 处理方式 |
 |---|---|---|---|
-| startActivation 通道存在与语义 | D-1 的降级链首档 | 0.5 人日（查宿主包/文档） | M1 #6 开工时补；缺则移除该档 |
-| spawn 接口参数面（回合预算/上下文注入方式） | FR-5 视野最小化的实现细节 | 0.5~1 人日 | M1 #6 一并确认 |
+| completion notice 的非 agent 调用方收取机制 | IF-8 回报路径（不威胁 D-1） | 0.5 人日（读 dsh-subagent lib） | M1 #6 开工第一步补 |
+| spawn 请求参数面（回合预算/上下文注入细节） | FR-5 视野最小化实现细节 | 0.5~1 人日 | M1 #6 一并确认 |
 | 心跳节拍在大图下的实测耗时 | 节拍/TTL 开放问题 | M1 基准用例 | 下次补（M1 内） |
 
 ## 开放问题  serves: 全文
 
 | 问题 | 选项 | 负责人 | 截止 |
 |---|---|---|---|
-| startActivation 是否存在且可调 | 存在→保留首档 / 不存在→降级链从 window branch 起 | M1 #6 承办人（待定） | 2026-11-08 前随 #6 开工 |
-| spawn 是否暴露 service 级调用面 | 是→直连 / 否→IF-8 改工具间接路径 | M1 #6 承办人（待定） | 同上 |
+| startActivation 是否存在且可调 | 存在→保留首档 / 不存在→降级链从 window branch 起 | 已决：存在，为 `ctx.subagents.startActivation()` service 级方法（E-7，2026-10-18） | 已决 |
+| spawn 是否暴露 service 级调用面 | 是→直连 / 否→IF-8 改工具间接路径 | 已决：是，dsh-subagent README 明文 direct service callers（E-8，2026-10-18） | 已决 |
+| completion notice 的非 agent 调用方收取机制 | 事件回报→直连 / 仅会话内→IF-8 改轮询留痕 | M1 #6 承办人（待定） | 2026-11-08 前随 #6 开工 |
 
 ## 附录  serves: 全文
 
 - **实测脚本与原始数据**：E-6 复现方式见证据索引；包枚举命令 `ls node_modules/@deepseek-ai`（宿主 checkout，2026-10-18，307 个包）。
 - **相关文档**：[设计文档](../projects/PRJ-0002/design/taskmaster-design.md)（四风险表「可行性」行由本报告回填）、[交付计划](../projects/PRJ-0002/plan/taskmaster-plan.md)（风险行同步）、[PRD](../projects/PRJ-0002/prd/taskmaster-prd.md)。
 - **评审与复议记录**：随 S0 评审（2026-10-25）一并过。
-- **变更历史**：v0.1（2026-10-18）首版。
+- **变更历史**：v0.1（2026-10-18）首版（有条件采纳，两个保留条件）；v0.1 修正（同日）：goal-round-driver 降为反面对照，Q-2 重写由 E-2 独立支撑；v0.2（同日）：E-7/E-8 闭合两个保留条件，D-1 升级为采纳，新增 F-7（宿主并发预算与驻留子会话消息机制），最危险假设更替为 completion notice 收取机制。
