@@ -1,7 +1,7 @@
 // persister 单元测试（S1 工作项 #1，覆盖需求 NFR-5 / 设计 persister 模块）
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, existsSync, readdirSync, utimesSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "../src/persister/atomic-write.ts";
@@ -60,6 +60,18 @@ test("单写者锁：猝死锁（mtime 超 staleMs）可被接管", () => {
   assert.equal(r.acquired, true);
   assert.equal(r.tookOverStale, true);
   b.release();
+});
+
+test("单写者锁：持有进程已死（PID 探测）→ 立即接管，不等 mtime TTL", () => {
+  const dir = scratch();
+  const p = join(dir, ".engine.lock");
+  // 伪造一个死 PID 的锁文件（mtime 很新，但进程不存在）
+  writeFileSync(p, JSON.stringify({ pid: 999999, token: "dead:1", acquiredAt: new Date().toISOString() }));
+  const lock = new SingleWriterLock(p, { staleMs: 60_000 });
+  const r = lock.acquire();
+  assert.equal(r.acquired, true);
+  assert.equal((r as any).tookOverStale, true);
+  lock.release();
 });
 
 test("事件流：seq 单调递增；重开后续号；崩溃半行不炸", () => {

@@ -137,7 +137,13 @@ export async function apply(ctx, config: any = {}) {
 
 function registerTools(ctx, engineOf, defineTool) {
   const tm = () => new TaskmasterTools(engineOf());
-  const reg = (def) => ctx.tools.register(defineTool(def));
+  // 真实 defineTool 要求每个工具声明 output { schema, render }（dsh-tools 契约）；
+  // 引擎返回结构统一为 { ok, ... }，用宽松 object schema + JSON 渲染。
+  const OUTPUT = {
+    schema: { type: "object", additionalProperties: true },
+    render: (_args: any, value: any) => [{ type: "text", text: JSON.stringify(value) }],
+  };
+  const reg = (def) => ctx.tools.register(defineTool({ output: OUTPUT, ...def }));
 
   reg({
     name: "tm_upsert",

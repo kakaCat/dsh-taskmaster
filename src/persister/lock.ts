@@ -37,11 +37,12 @@ export class SingleWriterLock {
       return { acquired: true };
     } catch (e: any) {
       if (e.code !== "EEXIST") throw e;
-      // 锁已存在：看是否猝死（mtime 超 staleMs 未刷新）
+      // 锁已存在：判猝死——优先看持有进程是否还活着（PID 探测），再退回 mtime 超时
+      const holder = safeRead(this.path);
+      const pidAlive = holder?.pid ? isPidAlive(holder.pid) : true;
       const stat = statSync(this.path);
-      if (now - stat.mtimeMs <= this.staleMs) {
-        throw new LockHeldError(this.path, safeRead(this.path));
-      }
+      const staleByTime = now - stat.mtimeMs > this.staleMs;
+      if (pidAlive && !staleByTime) throw new LockHeldError(this.path, holder);
       rmSync(this.path); // 接管猝死锁
       const fd = openSync(this.path, "wx");
       writeFileSync(fd, body);
@@ -66,6 +67,16 @@ export class SingleWriterLock {
     const holder = safeRead(this.path);
     if (holder?.token === this.token) rmSync(this.path);
     this.token = null;
+  }
+}
+
+/** 持有进程是否存活（挂掉即可立即接管，不必等 mtime TTL） */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: any) {
+    return e.code === "EPERM"; // 权限不足 = 进程存在；ESRCH = 已死
   }
 }
 
