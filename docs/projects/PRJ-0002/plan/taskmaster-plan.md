@@ -90,3 +90,8 @@ updated: 2026-10-18
   - **新字段**：`tasks[].expansion`（`atomic|expanded`，缺省语义 = atomic）、`tasks[].outputs`（`[{name, kind:file|check|value, path?}]`；name 在任务内唯一，边按 name 引用）。
   - **校验**：形状/枚举/未知键逐条报出（`tasks[i].expansion`、`tasks[i].outputs[j].*`）；旧图无新字段照常通过；未知键仍以 `invalid-graph` 拒绝，schema 只增不改。
   - **入口不变**：仍只经 `validateGraph` / `tm_upsert` 单一入口；新字段随版本快照落盘、可回读。
+- v0.11（2026-10-19）：**无依赖任务没有真并行**（126/126 + tsc 0，dist 已重建）。用户观察：图里三个互相无依赖的任务只跑一个。真机日志坐实：`19:11:29.212Z ready:[pack-pm,pack-loader,tpl-format]`，同一毫秒 `plan-offered batch:["engine-schema"]`——批次恒为 1。两层根因都要修：
+  - **并发缺省 = 1**（`config.concurrency`）：`arbitrate` 的槽位是 `concurrency - 在途数`，配置为 1 时每批永远只装 1 个。缺省改为 **8**（对齐宿主 `maxActiveSubagents` schema 缺省 8），钳制区间仍 1~16。
+  - **写域判定把共享宽泛声明当互斥**（真正的元凶）：`overlaps()` 用字符串前缀相交，而实际图里几乎每个任务都声明 `test/**`，于是 `test/**` vs `test/**` 互判冲突 → 即使并发调到 8，批次仍是 1（实测 `concurrency=8 → batch:[tpl-format] conflicts:[expand-contract]`）。改为：**完全相同的宽泛声明（含通配或目录尾斜杠）= 共享域，不互斥**；同具体文件、目录包含关系（`src/api/` vs `src/api/user.ts`）仍然串行——真冲突不放松。
+  - **配置热生效**：`concurrency` 原先在 boot 时一次性注入 reconciler，改 `config.yaml` 要重启才生效，与 `EngineGuard` 既有「配置每拍重读」语义不一致。改为每拍从 `guard.config` 读。
+  - 回归测试：`test/s2.test.ts` 新增 3 条——多任务共享 `test/**` 必须同批、真冲突仍串行、改配置下一拍生效。

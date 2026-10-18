@@ -220,8 +220,10 @@ export class Reconciler {
     if (cardNow?.state === "pending") return summary;
 
     // 出/更新计划卡（口径与 confirm 端一致：dispatchable）
-    // S2：写域裁决 + 并发槽（concurrency 来自配置；在途数从投影算）
-    const concurrency = this.concurrency;
+    // S2：写域裁决 + 并发槽（在途数从投影算）。
+    // concurrency 每拍从配置读（有 guard 时）——否则改 config.yaml 要重启才生效，
+    // 与「配置每拍重读」的既有语义不一致。
+    const concurrency = this.guard ? this.guard.config.concurrency : this.concurrency;
     const inFlightCount = Object.values(statusMap).filter((e: any) => IN_FLIGHT.has(e.status)).length;
     const { batch, conflicts } = arbitrate(dispatchable, { concurrency, inFlightCount });
     if (batch.length === 0) {

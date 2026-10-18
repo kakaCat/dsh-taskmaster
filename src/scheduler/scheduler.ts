@@ -2,7 +2,8 @@ import type { Graph, Task, StatusMap } from "../types.ts";
 
 // 就绪计算（FR-2）：任何派发路径共享的唯一入口。
 // 纪律：只有「全部前驱 done」的任务能进就绪集——无论触发来自工具、心跳对账还是重启续调。
-// S1 并发固定 1（串行派发）；写域裁决是 S2（#15），此处只算依赖、不管写域。
+// 无依赖任务默认同批并行（并发上限见 config.concurrency，缺省 8 ≈ 宿主 maxActiveSubagents）；
+// 写域裁决见 arbitrate（#15）：只有真冲突（同文件/目录包含）才串行。
 
 /**
  * 从图 + 状态投影算就绪集与等待关系。
@@ -53,8 +54,23 @@ export function selectBatch(ready: Task[], { limit = 1 }: { limit?: number } = {
   return ready.slice(0, limit);
 }
 
-/** 写域重叠：前缀相交即冲突 */
+/** 宽泛声明：含通配或目录尾斜杠——描述的是「域」，不是某个具体文件 */
+function isBroadScope(scope: string): boolean {
+  return scope.includes("*") || scope.endsWith("/");
+}
+
+/**
+ * 写域重叠（S2 #15）：前缀相交即冲突，但**相同的宽泛声明视为共享域**。
+ *
+ * 为什么：`writeScopes` 是粗粒度声明，几乎每个任务都会带 `test/**` 这种「我也会动测试」。
+ * 若把它当成互斥锁，全图永远串行——实测 11 个任务、3 个无依赖，批次恒为 1。
+ * 两个任务同时往 `test/` 下**新增不同文件**并不冲突，真正危险的是同一文件或包含关系：
+ *   - 完全相同且是具体路径（无通配、无尾斜杠）→ 同一文件，互斥；
+ *   - 一个是另一个的严格前缀（`src/api/` 与 `src/api/user.ts`）→ 包含，互斥；
+ *   - 相同宽泛声明（`test/` 与 `test/`）→ 共享域，放行并行。
+ */
 function overlaps(a: string, b: string): boolean {
+  if (a === b) return !isBroadScope(a);
   return a.startsWith(b) || b.startsWith(a);
 }
 

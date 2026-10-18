@@ -60,6 +60,59 @@ test("#15 并行派发（装配级）：concurrency=2 两张独立任务一批�
   assert.equal(sessions.length, 2);
 });
 
+// ─── #15 回归：无依赖任务必须真的并行（共享宽泛写域不算冲突） ───
+
+test("#15 回归：多个无依赖任务在同一批派出——共享 test/** 不互相判冲突", () => {
+  // 真实形态：每个任务都声明 test/**（粗粒度「我也会动测试」），旧规则让它们永远互斥
+  const ready = [
+    T("tpl-format", ["src/templates/**", "test/**"]),
+    T("expand-contract", ["src/expand/**", "test/**"]),
+    T("pack-loader", ["src/domain/**", "test/**"]),
+  ];
+  const r = arbitrate(ready, { concurrency: 8 });
+  assert.deepEqual(r.batch.map((t) => t.id), ["tpl-format", "expand-contract", "pack-loader"]); // 全派
+  assert.deepEqual(r.conflicts.map((t) => t.id), []); // 无冲突
+});
+
+test("#15 回归：真正的同文件/包含关系仍然串行（共享域不掩盖真冲突）", () => {
+  // 同一具体文件 → 互斥
+  let r = arbitrate([T("a", ["src/x.ts"]), T("b", ["src/x.ts"])], { concurrency: 8 });
+  assert.deepEqual(r.batch.map((t) => t.id), ["a"]);
+  assert.deepEqual(r.conflicts.map((t) => t.id), ["b"]);
+  // 目录包含关系 → 互斥（一个写整目录，一个写目录内文件）
+  r = arbitrate([T("a", ["src/api/"]), T("b", ["src/api/user.ts"])], { concurrency: 8 });
+  assert.deepEqual(r.batch.map((t) => t.id), ["a"]);
+  assert.deepEqual(r.conflicts.map((t) => t.id), ["b"]);
+});
+
+test("#15 回归：改 config.yaml 的 concurrency 下一拍生效（无需重启）", async () => {
+  const dir = scratch();
+  writeFileSync(join(dir, "config.yaml"), "enabled: true\nconcurrency: 1");
+  const engine: any = await boot(dir, {
+    channels: { spawn: async () => ({ sessionId: "s-1" }) },
+    adapters: { activityOf: () => 0 },
+  });
+  const tm = new TaskmasterTools(engine);
+  // 3 个互相独立的任务：concurrency=1 时首批只出 1 个
+  const reg = await tm.upsertGraph({
+    graphYaml: yaml.dump({
+      apiVersion: "taskmaster/v1",
+      tasks: [T("t-1", ["a/x/"]), T("t-2", ["b/y/"]), T("t-3", ["c/z/"])],
+    }),
+  });
+  const gid = reg.graphId;
+  await engine.reconciler.reconcileAll();
+  const card1 = engine.gate.current(gid);
+  assert.equal(card1.batch.length, 1); // concurrency=1 → 串行
+  await tm.confirmPlan({ graphId: gid, planId: card1.planId });
+  await engine.reconciler.reconcileAll();
+  // 热改配置：不重启，只改文件；下一拍剩下的 2 个应同批出卡
+  writeFileSync(join(dir, "config.yaml"), "enabled: true\nconcurrency: 8");
+  await engine.reconciler.reconcileAll();
+  const card2 = engine.gate.current(gid);
+  assert.equal(card2.batch.length, 2); // 下一拍即按 8 出批
+});
+
 // ─── #17 死锁巡检 ───
 
 test("#17 死锁上报：等待集哈希去重（同集只报一次，事件+报告落盘）", () => {

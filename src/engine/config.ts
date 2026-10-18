@@ -9,7 +9,7 @@ export const DEFAULT_CONFIG = {
   enabled: false, // 总开关：缺省关闭（NFR-3）
   beatMs: 5_000, // 心跳节拍（全局默认；钳制见下）
   silentMs: 90_000, // 探活 TTL：沉默超此 → stalled
-  concurrency: 1, // 缺省串行；S2 可配 1~16
+  concurrency: 8, // 缺省并行 8（与宿主 maxActiveSubagents 缺省对齐）；无写域冲突的无依赖任务同批派出
   autoFacets: [], // gate=auto 里程碑切面
 };
 
