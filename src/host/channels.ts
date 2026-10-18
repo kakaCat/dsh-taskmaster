@@ -39,14 +39,15 @@ export function renderPackage(pkg) {
  * @param ownerAgentFor (graphId) → live agent | null（属主窗口的存活 agent）
  */
 export function makeChannels(ctx, ownerAgentFor) {
+  const subagents = ctx.get?.("subagents"); // 安全访问器：未 inject 也不抛
   const channels: Record<string, any> = {};
 
   // startActivation / spawn 两档都走 subagents service，provider 不同
-  if (ctx.subagents?.startActivation) {
+  if (subagents?.startActivation) {
     const viaSubagents = (provider) => async (pkg) => {
       const parent = ownerAgentFor(pkg.graphId);
       if (!parent) throw new Error("no live owner agent（live parent 约束：属主窗口不在场）");
-      const r = await ctx.subagents.startActivation({
+      const r = await subagents.startActivation({
         provider,
         request: { parent, prompt: renderPackage(pkg), maxDepth: 1 },
       });

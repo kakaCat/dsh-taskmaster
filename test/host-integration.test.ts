@@ -16,6 +16,17 @@ function mockHost(dir) {
   const listeners = new Map<string, any[]>();
   const agents = new Map<string, any>();
   const state: any = { beat: null, effects: [] as any[], spawnCalls: [] as any[], notifications: [] as any[] };
+  const subagents = {
+    async startActivation(spec) {
+      const id = `child-${state.spawnCalls.length + 1}`;
+      state.spawnCalls.push({ provider: spec.provider, prompt: spec.request.prompt });
+      agents.set(id, { session: { id } });
+      return { childId: id };
+    },
+    async sendMessage(parent, targetId, content) {
+      state.notifications.push({ targetId, content });
+    },
+  };
   const ctx = {
     tools: { register: (t) => tools.set(t.name, t) },
     on: (ev, cb) => {
@@ -30,18 +41,8 @@ function mockHost(dir) {
       state.effects.push(dispose);
       return dispose;
     },
-    get: (name) => (name === "agents" ? agents : undefined),
-    subagents: {
-      async startActivation(spec) {
-        const id = `child-${state.spawnCalls.length + 1}`;
-        state.spawnCalls.push({ provider: spec.provider, prompt: spec.request.prompt });
-        agents.set(id, { session: { id } }); // 子 agent 进场（live）
-        return { childId: id };
-      },
-      async sendMessage(parent, targetId, content) {
-        state.notifications.push({ targetId, content });
-      },
-    },
+    get: (name) => (name === "agents" ? agents : name === "subagents" ? subagents : undefined),
+    subagents,
   };
   return { ctx, tools, agents, state };
 }

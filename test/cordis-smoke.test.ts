@@ -3,7 +3,7 @@
 // 工具注册经 cordis 服务协议、事件订阅、dispose 全量清理。
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
@@ -15,6 +15,22 @@ function scratch() {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+test("真 cordis（最小服务面）：只提供 tools 时插件也能挂载——安全访问器回归", async () => {
+  const dir = scratch();
+  writeFileSync(join(dir, "config.yaml"), "enabled: true\nbeatMs: 50");
+  const root = new Context();
+  const tools = new Map<string, any>();
+  root.reflect.provide("tools", { register: (t: any) => tools.set(t.name, t) });
+  // 注意：不提供 subagents / agents——真宿主里缺失的服务不得让 apply 抛错
+  const fiber = await root.plugin(taskmaster, { dataRoot: dir } as any);
+  assert.ok(tools.has("tm_upsert"), "缺工具 → 插件未挂载");
+  // enabled=true 的引擎持单写者锁；dispose 必须释放
+  assert.equal(existsSync(join(dir, ".engine.lock")), true, "引擎未启动（锁文件缺失）");
+  await (fiber as any)?.dispose?.();
+  await root.fiber.dispose();
+  assert.equal(existsSync(join(dir, ".engine.lock")), false, "dispose 后锁未释放");
+});
 
 test("真 cordis 装配：插件挂载 → 工具注册 → 心跳出卡 → dispose 清理", async () => {
   const dir = scratch();

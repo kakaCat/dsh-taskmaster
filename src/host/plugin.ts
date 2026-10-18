@@ -60,7 +60,7 @@ export async function apply(ctx, config: any = {}) {
 
   let engine; // boot 后可用
   const channels: Record<string, any> = {};
-  Object.assign(channels, makeChannels({ subagents: ctx.subagents, get: ctx.get?.bind(ctx) }, (gid) => ownerAgentFor(gid, engine)));
+  Object.assign(channels, makeChannels(ctx, (gid) => ownerAgentFor(gid, engine)));
 
   const adapters = makeAdapters({ get: ctx.get?.bind(ctx) }, activityCounters);
   // 主动探活（S2 #16）：经宿主 sendMessage 向驻留子会话投一条 ping（sender = 属主 agent）；
@@ -68,8 +68,9 @@ export async function apply(ctx, config: any = {}) {
   adapters.probe = async (sessionId: string) => {
     const binding = engine.binder.bySession(sessionId);
     const parent = binding ? ownerAgentFor(binding.graphId, engine) : null;
-    if (parent && ctx.subagents?.sendMessage) {
-      await ctx.subagents.sendMessage(parent, sessionId, "Taskmaster 探活：请回一条进展（任意内容即可）");
+    const subagents = ctx.get?.("subagents");
+    if (parent && subagents?.sendMessage) {
+      await subagents.sendMessage(parent, sessionId, "Taskmaster 探活：请回一条进展（任意内容即可）");
     }
   };
   // fetchResult 保持 null：subagent/end 不带证据，停机期间完成的结果无法机械补验收——
@@ -83,8 +84,9 @@ export async function apply(ctx, config: any = {}) {
       // 打回通知：经 subagents.sendMessage 寻址驻留子会话（sender = 属主 agent）
       const binding = engine.binder.bySession(sessionId);
       const parent = binding ? ownerAgentFor(binding.graphId, engine) : null;
-      if (parent && ctx.subagents?.sendMessage) {
-        await ctx.subagents.sendMessage(parent, sessionId, message);
+      const subagents = ctx.get?.("subagents");
+      if (parent && subagents?.sendMessage) {
+        await subagents.sendMessage(parent, sessionId, message);
       } // 属主不在场则跳过——打回事件已留痕，属主回来在视图可见
     },
   });
@@ -99,6 +101,9 @@ export async function apply(ctx, config: any = {}) {
   const beat = () => engine.reconciler.reconcileAll().catch((e) => {
     ctx.logger?.error?.("taskmaster beat failed", e);
   });
+  // 单写者锁随 fiber 生命周期释放（否则卸载后重启会撞 engine-lock-held）
+  ctx.effect(() => () => engine.lock?.release?.(), "taskmaster/lock");
+
   // 心跳定时器：cordis effect 托管清理（fiber dispose 时自动 clear，不依赖 timer 服务）
   ctx.effect(() => {
     const timer = setInterval(beat, engine.config.beatMs);
