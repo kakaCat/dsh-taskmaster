@@ -1,0 +1,13 @@
+{
+  "name": "dsh-taskmaster",
+  "version": "0.0.1",
+  "description": "Taskmaster：独立的 agent 任务调度引擎（宿主插件级常驻，按依赖派发、探活、验收）",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
