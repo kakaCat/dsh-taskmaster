@@ -1,7 +1,8 @@
 // dsh-taskmaster 插件入口（S1 施工中）。
 // S1 全部工作项 + 宿主集成（cordis 插件/通道/适配器）完成。
 // 待续：真宿主联调（cordis 装配 + 真实 spawn 全链路）→ S2。
-export { apply, name as pluginName, Config as pluginConfig } from "./host/plugin.ts";
+// 插件装载协议（cordis patch 按包名加载，需要规范导出：apply / inject / name / Config）
+export { apply, inject, name, Config } from "./host/plugin.ts";
 // 施工序与出口判据见 docs/projects/PRJ-0002/plan/taskmaster-plan.md。
 
 export { atomicWriteFileSync } from "./persister/atomic-write.ts";

@@ -4,6 +4,7 @@
 // 纪律：enabled=false 时零定时器零订阅（读写照常由 tools 直通模块）。
 
 import { join } from "node:path";
+import { homedir } from "node:os";
 import z from "@deepseek-ai/schemastery";
 import { boot } from "../engine/boot.ts";
 import { TaskmasterTools } from "../tools/tools.ts";
@@ -18,6 +19,13 @@ export const inject = ["tools"];
 export const Config = z.object({
   dataRoot: z.string(),
 });
+
+/** 数据根：与 dsh-window 同惯例——$DSH_HOME/storages/<plugin>（缺省 ~/.dsh）。 */
+function resolveDataRoot(configured?: string): string {
+  if (configured) return configured;
+  const home = process.env.DSH_HOME ?? join(homedir(), ".dsh");
+  return join(home, "storages", "dsh-taskmaster");
+}
 
 /**
  * defineTool 解析：宿主挂着 @deepseek-ai/dsh-tools 就用真的（schema 校验/输出规范化），
@@ -34,7 +42,7 @@ async function resolveDefineTool(config) {
 }
 
 export async function apply(ctx, config: any = {}) {
-  const dataRoot = config.dataRoot ?? join(process.cwd(), ".dsh", "taskmaster");
+  const dataRoot = resolveDataRoot(config.dataRoot);
   const defineTool = await resolveDefineTool(config);
 
   // 活性计数器（探活信号：subagent 生命周期事件驱动）
