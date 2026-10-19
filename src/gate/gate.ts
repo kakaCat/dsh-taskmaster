@@ -125,7 +125,16 @@ export class Gate {
       graphId,
       graphVersion,
       readyHash: hash,
-      batch: batch.map((t) => ({ taskId: t.id, statement: t.statement })),
+      // 计划卡必须透出 mechanical 命令：确认闸是唯一的人审点，命令在验收时以宿主权限执行，
+      // 只给 taskId+statement 等于让人盲签（评审发现的安全缺口）。
+      batch: batch.map((t) => {
+        const item: PlanCard["batch"][number] = { taskId: t.id, statement: t.statement };
+        const commands = (t.checks ?? [])
+          .filter((c) => typeof c === "object" && c !== null && c.verify === "mechanical" && typeof c.command === "string")
+          .map((c) => (c as { command?: string }).command as string);
+        if (commands.length > 0) item.mechanicalCommands = commands;
+        return item;
+      }),
       readyCount: ready.length,
       conflicts:
         conflicts && conflicts.length > 0

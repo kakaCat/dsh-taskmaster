@@ -121,3 +121,14 @@ test("持久化：换实例后卡状态可读回", () => {
   assert.equal(gate2.current("g-1")!.planId, r.card.planId);
   assert.equal(gate2.current("g-1")!.state, "pending");
 });
+
+test("计划卡透出 mechanical 命令：人审确认闸不能盲签（回归）", () => {
+  const gate = new Gate(scratch());
+  const withCmd = T("t-1", {
+    checks: [{ text: "构建通过", verify: "mechanical", command: "pnpm build" }, "人工复核"],
+  });
+  const noCmd = T("t-2");
+  const r = gate.offer({ graphId: "g-1", graphVersion: 1, ready: [withCmd, noCmd], batch: [withCmd, noCmd], concurrency: 2 });
+  assert.deepEqual(r.card.batch[0].mechanicalCommands, ["pnpm build"]);
+  assert.equal(r.card.batch[1].mechanicalCommands, undefined); // 无命令不挂字段（lossless JSON 纪律）
+});
