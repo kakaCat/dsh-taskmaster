@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "../persister/atomic-write.ts";
 import { EventLog } from "../persister/event-log.ts";
+import { scopesOverlap } from "../scheduler/scheduler.ts";
 import type { PlanCard, Task } from "../types.ts";
 
 export class PlanStaleError extends Error {
@@ -40,15 +41,14 @@ export function readyHashOf({ graphVersion, readyIds, batchIds, concurrency }: {
   return createHash("sha1").update(payload).digest("hex").slice(0, 12);
 }
 
-/** 写域冲突检测（S1 只展示不裁决）：前缀相交即冲突 */
+/** 写域冲突检测（S1 只展示不裁决）：与调度仲裁同一判定（scheduler.scopesOverlap）——展示报的与调度拦的恒一致 */
 export function writeScopeConflicts(readyTasks: Task[]): Array<{ tasks: string[]; scopes: string[] }> {
   const conflicts: any[] = [];
-  const overlap = (a, b) => a.startsWith(b) || b.startsWith(a);
   for (let i = 0; i < readyTasks.length; i++) {
     for (let j = i + 1; j < readyTasks.length; j++) {
       const A = readyTasks[i];
       const B = readyTasks[j];
-      const shared = (A.writeScopes ?? []).filter((sa) => (B.writeScopes ?? []).some((sb) => overlap(sa, sb)));
+      const shared = (A.writeScopes ?? []).filter((sa) => (B.writeScopes ?? []).some((sb) => scopesOverlap(sa, sb)));
       if (shared.length > 0) conflicts.push({ tasks: [A.id, B.id], scopes: shared });
     }
   }

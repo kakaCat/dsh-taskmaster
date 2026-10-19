@@ -22,7 +22,7 @@ const LIMITS = {
 
 export function loadConfig(dataRoot) {
   const p = join(dataRoot, "config.yaml");
-  const raw = existsSync(p) ? (yaml.load(readFileSync(p, "utf8")) ?? {}) : {};
+  const raw: any = existsSync(p) ? (yaml.load(readFileSync(p, "utf8")) ?? {}) : {};
   const cfg = { ...DEFAULT_CONFIG, ...raw };
   for (const [key, [lo, hi]] of Object.entries(LIMITS)) {
     if (typeof cfg[key] === "number") cfg[key] = Math.min(hi, Math.max(lo, cfg[key]));

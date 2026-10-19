@@ -68,8 +68,11 @@ function isBroadScope(scope: string): boolean {
  *   - 完全相同且是具体路径（无通配、无尾斜杠）→ 同一文件，互斥；
  *   - 一个是另一个的严格前缀（`src/api/` 与 `src/api/user.ts`）→ 包含，互斥；
  *   - 相同宽泛声明（`test/` 与 `test/`）→ 共享域，放行并行。
+ *
+ * 本函数是写域重叠的**唯一判定入口**：调度仲裁（arbitrate）与计划卡展示
+ * （gate.writeScopeConflicts）共用，保证「展示报的」与「调度拦的」永远一致。
  */
-function overlaps(a: string, b: string): boolean {
+export function scopesOverlap(a: string, b: string): boolean {
   if (a === b) return !isBroadScope(a);
   return a.startsWith(b) || b.startsWith(a);
 }
@@ -89,7 +92,7 @@ export function arbitrate(
   for (const task of ready) {
     if (batch.length >= slots) break;
     const scopes = task.writeScopes ?? [];
-    const clash = batch.some((t) => (t.writeScopes ?? []).some((a) => scopes.some((b) => overlaps(a, b))));
+    const clash = batch.some((t) => (t.writeScopes ?? []).some((a) => scopes.some((b) => scopesOverlap(a, b))));
     if (clash) {
       conflicts.push(task); // 先到先得：本批已有人在写重叠域
       continue;

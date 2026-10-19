@@ -112,6 +112,22 @@ test("计划卡带写域冲突展示（S1 只展示不裁决）", () => {
   assert.deepEqual(conflicts[0].tasks, ["a", "b"]);
 });
 
+test("展示与调度同口径：相同宽泛声明是共享域不报冲突，相同具体文件才报（回归）", () => {
+  // 调度仲裁（scheduler.scopesOverlap）对 test/** 撞 test/** 放行并行——展示不得报警，否则人审被误导
+  const shared = writeScopeConflicts([
+    T("a", { writeScopes: ["test/**", "src/a.ts"] }),
+    T("b", { writeScopes: ["test/**", "src/b.ts"] }),
+  ]);
+  assert.equal(shared.length, 0);
+  // 相同具体路径（无通配）仍是真冲突
+  const concrete = writeScopeConflicts([
+    T("a", { writeScopes: ["src/same.ts"] }),
+    T("b", { writeScopes: ["src/same.ts"] }),
+  ]);
+  assert.equal(concrete.length, 1);
+  assert.deepEqual(concrete[0].tasks, ["a", "b"]);
+});
+
 test("持久化：换实例后卡状态可读回", () => {
   const dir = scratch();
   const gate = new Gate(dir);
