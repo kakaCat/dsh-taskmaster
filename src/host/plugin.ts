@@ -16,7 +16,7 @@ import { EventLog } from "../persister/event-log.ts";
 export const name = "taskmaster";
 export const inject = ["tools"];
 
-// 宿主 Config（cordis 用 schemastery schema；缺省 dataRoot = <cwd>/.dsh/taskmaster）
+// 宿主 Config（cordis 用 schemastery schema；只承载 dataRoot——引擎开关/节拍等在数据根的 config.yaml，见 engine/config.ts）
 export const Config = z.object({
   dataRoot: z.string(),
 });
@@ -218,7 +218,7 @@ function registerTools(ctx, engineOf) {
     description: "Taskmaster 量化视图（图/任务/在途/等待关系/引擎态，全部从图投影）",
     parameters: {
       graphId: { type: "string" },
-      groupBy: { type: "string", description: "kind | story | milestone" },
+      groupBy: { type: "string", enum: ["kind", "story", "milestone"], description: "kind | story | milestone" },
       taskId: { type: "string" },
     },
     async execute(args) {

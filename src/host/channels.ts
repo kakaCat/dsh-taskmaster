@@ -1,6 +1,6 @@
 // 宿主通道适配器（IF-8 的真接法；调研 E-7/E-8/E-9）。
-// 约束（调研 F-8）：startActivation/spawn 档要求 exact live parent agent——
-// 属主窗口（meta.ownerSessionId）不在场时这两档抛错，降级链自动落到 branch/纯对话流。
+// 约束（调研 F-8）：startActivation 要求 exact live parent agent——
+// 属主窗口（meta.ownerSessionId）不在场时抛错，降级链自动落到 fork 档；全挂 = 纯对话流。
 //
 // 两个真宿主契约（2026-10-19 联调踩坑）：
 //   ① **服务必须惰性取**：插件 apply 时 subagents 可能尚未 active（cordis 服务按 inject 依赖
@@ -74,17 +74,16 @@ export function makeChannels(ctx, ownerAgentFor) {
     });
     const sessionId = r?.childId ?? r?.id;
     if (!sessionId) throw new Error(`subagents.startActivation（provider=${provider}）未返回子会话 id`);
+    // 激活句柄的 result Promise 我们不消费（交卷证据只认 tm_node_update）：
+    // 挂 noop catch 防止其 reject 时宿主进程吃 unhandledRejection。
+    // dispose() 刻意不调——continuable 子会话要继续执行任务，句柄随宿主托管回收。
+    void Promise.resolve(r?.result).catch(() => {});
     return { sessionId: String(sessionId) };
   };
 
-  // 三档：本地 continuable 子会话（spawn）→ 窗口分支（window service）→ fork 兜底
+  // 两档：本地 continuable 子会话（spawn）→ fork 兜底。
+  // （曾有 branch 档走 window.openBranch，但宿主服务目录不存在 window 服务——死通道，已移除。）
   channels.startActivation = viaSubagents("spawn");
-  channels.branch = async (pkg: any) => {
-    const windowSvc: any = ctx.get?.("window");
-    if (!windowSvc?.openBranch) throw new Error("unavailable: window.openBranch");
-    const r = await windowSvc.openBranch({ prompt: renderPackage(pkg) });
-    return { sessionId: String(r.sessionId ?? r.windowKey) };
-  };
   channels.spawn = viaSubagents("fork");
 
   // 执行面就绪探测（启动期竞态用）：区分「暂时没 active」与「宿主根本没有执行面」。
@@ -109,15 +108,14 @@ export function makeChannels(ctx, ownerAgentFor) {
     const s = liveSubagents();
     return !!(s?.startActivation && hasProvider(s));
   };
-  const windowReady = () => !!ctx.get?.("window")?.openBranch;
   const createdAt = Date.now();
   /** 启动宽限：服务还没被任何插件 provide 出来时，先按「暂未就绪」处理，不急着降级 */
   const STARTUP_GRACE_MS = 20_000;
   /** 现在就能投递至少一档？ */
-  channels.available = () => subagentsReady() || windowReady();
+  channels.available = () => subagentsReady();
   /** 未就绪是「暂时」还是「根本没有」？仅暂时返回 true（可延迟，不降级）。 */
   channels.pending = () => {
-    if (subagentsReady() || windowReady()) return false;
+    if (subagentsReady()) return false;
     const impl = subagentsImpl();
     if (impl && impl.fiber?.state !== 2) return true; // 服务已注册、fiber 还没 active
     const s = liveSubagents();
