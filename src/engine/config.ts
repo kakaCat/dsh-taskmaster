@@ -11,6 +11,7 @@ export const DEFAULT_CONFIG = {
   silentMs: 90_000, // 探活 TTL：沉默超此 → stalled
   concurrency: 8, // 缺省并行 8（与宿主 maxActiveSubagents 缺省对齐）；无写域冲突的无依赖任务同批派出
   autoFacets: [], // gate=auto 里程碑切面
+  autoResume: { enabled: false, maxPerTask: 2 }, // 自动续跑：缺省关闭，不改变现状行为
 };
 
 const LIMITS = {
@@ -27,5 +28,13 @@ export function loadConfig(dataRoot) {
     if (typeof cfg[key] === "number") cfg[key] = Math.min(hi, Math.max(lo, cfg[key]));
   }
   if (!Array.isArray(cfg.autoFacets)) cfg.autoFacets = [];
+  // autoResume：浅合并会整个覆盖缺省对象，须逐字段回填 + 钳制 maxPerTask 0..8
+  const rawResume = raw?.autoResume && typeof raw.autoResume === "object" ? raw.autoResume : {};
+  cfg.autoResume = {
+    enabled: rawResume.enabled === true,
+    maxPerTask: typeof rawResume.maxPerTask === "number"
+      ? Math.min(8, Math.max(0, Math.floor(rawResume.maxPerTask)))
+      : DEFAULT_CONFIG.autoResume.maxPerTask,
+  };
   return cfg;
 }

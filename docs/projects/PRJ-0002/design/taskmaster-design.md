@@ -317,6 +317,54 @@ S2 新增；S1 期用 enabled 开关近似。
 - **回滚演练**：M1 走查含"关开关零 spawn"与"kill 重启续调"两步；预期 1 分钟内停派。
 - **不可逆动作**：图注销（二次确认 + 历史全留可审计）；人裁重派（新世代，旧世代回话即拒，但已产生的业务写入不撤——这正是不自动重跑的原因）。
 
+## 监控自愈（autoResume）  serves: FR-7、NFR-1、NFR-3
+
+「异常只报不修（R-8）」是缺省行为；本节描述其**唯一例外**：`autoResume.enabled` 显式开启后，死判（dead）任务由引擎自动续跑，直至自愈额度耗尽落 blocked 等人裁。缺省关闭，不改变现状行为。
+
+### 状态机：死判 → auto-resume → 超上限 blocked
+
+活性是投影、不进主状态机；自愈动作发生在「新判 dead」这一拍（去重：同人裁不重复上报，同一绑定不重复自愈）：
+
+```
+进程存活信号 = false
+        │
+        ▼
+   dead 标记（append dead 事件 + reports/ 落盘）
+        │
+        ├─ autoResume.enabled = false ──► 停：只报不修，等人裁（IF-6）
+        │
+        ▼
+自愈计数 count = 事件流中本任务 task-resume(auto:true) 条数
+        │
+        ├─ count < maxPerTask ──► auto-resume：
+        │     ① binder.supersede 关旧绑定（旧世代 runId 作废，回话即 stale-run 拒收）
+        │     ② 投影 CAS 翻 ready + runId=null（新世代由下一拍派发链签发）
+        │     ③ append task-resume 事件（auto:true / actor:"auto-resume" / count / maxPerTask）
+        │     ④ 崩溃重建走既有 fold 重放成 ready——零漂移、无需改引擎模块
+        │
+        └─ count ≥ maxPerTask ──► blocked：
+              ① 投影 CAS 翻 blocked（blockReason 写明额度耗尽）
+              ② append blocked 事件 + reports/ 落盘（绑定保留）
+              ③ 回到「只报不修」，等人裁 resume/reassign
+```
+
+为什么只自愈 dead 不自愈 stalled：dead 的进程存活信号为 false，执行者已确定不可能再交卷，重派零业务风险；stalled 的执行者可能仍在工作，重派会造成双写——必须等人裁。
+
+### 配置项（config.yaml）
+
+| 字段 | 缺省 | 说明 |
+|---|---|---|
+| `autoResume.enabled` | `false` | 自愈总开关；缺省关闭 = 纯上报的现状行为 |
+| `autoResume.maxPerTask` | `2` | 单任务自愈额度上限；加载时钳制到 0..8，非数字回退缺省 |
+
+加载纪律：浅合并会整体覆盖缺省对象，须逐字段回填；Monitor 缺省每拍从 config.yaml 重读，改配置下一拍生效（构造注入可固定，供测试）。
+
+### 与 tm_task_action（IF-6）人工路径的关系
+
+- **同语义**：auto-resume 是 IF-6 人裁 resume 语义的自动化特例——同样关旧世代（supersede）、翻 ready、走标准派发链签发新世代，**绝不自动重放写请求**（NFR-1 红线不破）。
+- **可区分**：事件 kind 复用 `task-resume`，但自愈带 `auto:true / actor:"auto-resume"`；自愈计数只统计 `auto:true`，**人裁 resume 不占自愈额度**。
+- **互补不自洽**：超上限落 blocked 后，出口只有 IF-6 人裁；人裁 resume 后若再次死亡且额度仍耗尽，依然落 blocked——引擎永远不会绕过额度把人裁架空。
+
 ## 跨关注点  serves: NFR-1、NFR-3、NFR-5
 
 | 关注点 | 结论 | 依据与措施 |
@@ -345,7 +393,7 @@ S2 新增；S1 期用 enabled 开关近似。
 | FR-4 | gate / IF-2 | 不带 confirm 零 spawn | 计划卡驳回率 |
 | FR-5 | deliverer 载荷 / 附录 F2 | 执行会话上下文检查 | 不适用 |
 | FR-6 | acceptor / IF-3 | 证据缺失打回 | M1 走查通过率 |
-| FR-7 | monitor / IF-3 | 卡死注入（M1 被动/M2 主动） | 卡死发现时长 |
+| FR-7 | monitor / 监控自愈 / IF-3 | 卡死注入（M1 被动/M2 主动）；kill 注入看 auto-resume→blocked 翻转 | 卡死发现时长 |
 | FR-8 | reconciler / 方案总览 | 零调用一拍出卡；丢事件注入 | M1 走查通过率 |
 | FR-9 | statuser / IF-4 | group_by=kind 与图一致 | 不适用 |
 | FR-10 | deliverer / IF-8 | 投递失败回滚；并发触发 at-most-once | M1 走查通过率 |
