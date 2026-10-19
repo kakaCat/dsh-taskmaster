@@ -1,6 +1,7 @@
 # dsh-taskmaster 装载层（bundle patch）：常驻任务调度引擎。
 # 注册 8 个 tm_* 工具（upsert/confirm/node_update/status/graph_ctl/task_action/engine_stop/engine_start），
-# 心跳对账由 ctx.effect 托管；enabled 开关在 taskmaster.enabled（config.yaml）。
+# 心跳对账由 ctx.effect 托管。
+# 注意：行配置只有 dataRoot；enabled 总开关不在此处——它在数据根的 config.yaml（每拍重读）。
 - insert:
     - id: dsh-taskmaster
       name: dsh-taskmaster

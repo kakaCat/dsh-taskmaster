@@ -14,7 +14,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@deepseek-ai/dsh-tools": "link:/Applications/DeepSeek Harness.app/Contents/Resources/app/dsh/node_modules/@deepseek-ai/dsh-tools",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
     "@deepseek-ai/schemastery": "^3.18.5",
     "js-yaml": "^5.5.0"
   },
@@ -32,12 +32,16 @@
       "import": "./dist/index.mjs",
       "default": "./dist/index.mjs"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
   },
   "files": [
     "dist",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "locale/*.json",
+    "icon.svg"
   ],
   "dsh": {
     "bundle": {

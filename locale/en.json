@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Taskmaster",
+    "description": "Resident agent task scheduler: dispatch by dependency, probe liveness, verify acceptance — all reconciled against a durable event log."
+  }
+}

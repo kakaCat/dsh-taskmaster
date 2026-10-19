@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Taskmaster 任务调度",
+    "description": "宿主常驻的 agent 任务调度引擎：按依赖派发、探活、验收，全部状态可从事件流重建。"
+  }
+}
