@@ -104,7 +104,7 @@ test("世代失效：人裁重派后，旧 runId 交卷 → stale-run", async ()
   const { runId } = seedRunning(dir);
   const binder = new Binder(dir);
   // 人裁重派：旧绑定作废，新绑定签发新世代，投影指向新 runId
-  binder.supersede("t-1", { reason: "人裁" });
+  binder.supersede("g-1", "t-1", { reason: "人裁" });
   const fresh = binder.open({ graphId: "g-1", graphVersion: 1, taskId: "t-1", sessionId: "s-2", channel: "spawn" });
   const p = join(dir, "state/g-1.state.json");
   const proj = readProjection(p);

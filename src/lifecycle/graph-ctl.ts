@@ -56,7 +56,7 @@ export class GraphCtl {
     const orphans = this.binder.byGraph(graphId);
     const events = this.#eventLog(graphId);
     for (const b of orphans) {
-      this.binder.close(b.taskId, { outcome: "deregistered-lost-contact" });
+      this.binder.close(graphId, b.taskId, { outcome: "deregistered-lost-contact" });
       events.append("binding-abandoned", { taskId: b.taskId, runId: b.runId, sessionId: b.sessionId });
       atomicWriteFileSync(
         join(this.dataRoot, "reports", `${now.toISOString().replaceAll(":", "-")}-abandoned-${b.taskId}.json`),

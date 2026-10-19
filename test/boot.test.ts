@@ -136,3 +136,21 @@ test("rebuildProjection 重放规则：accept/reject/blocked/失败回滚各归�
   assert.equal(map["t-1"].status, "done");
   assert.equal(map["t-2"].status, "blocked");
 });
+
+test("rebuildProjection 重放人裁：task-reopen/resume/reassign 重启后不丢失（回归）", () => {
+  const g = graph();
+  // reopen：done → pending（旧世代作废）；resume/reassign：在途 → ready
+  const evs = [
+    { kind: "ready", tasks: ["t-1", "t-2"] },
+    { kind: "dispatch", taskId: "t-1", runId: "r-1" },
+    { kind: "accept", taskId: "t-1", runId: "r-1" },
+    { kind: "task-reopen", taskId: "t-1", actor: "u" }, // 人裁重干
+    { kind: "dispatch", taskId: "t-2", runId: "r-2" },
+    { kind: "task-resume", taskId: "t-2", actor: "u" }, // 人裁重派
+  ];
+  const map = rebuildProjection(g, evs);
+  assert.equal(map["t-1"].status, "pending"); // 不是 done——人裁不能被重启吃掉
+  assert.equal(map["t-1"].runId, null);
+  assert.equal(map["t-2"].status, "ready"); // 不是 running——否则每拍误报 drift
+  assert.equal(map["t-2"].runId, null);
+});

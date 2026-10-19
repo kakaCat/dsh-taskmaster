@@ -111,17 +111,21 @@ export async function boot(dataRoot, { channels = {}, adapters = {}, notifier = 
       }
     }
     if (adapters.processAlive?.(b.sessionId) === false) {
-      // 死了标 stalled 报人（只报不修）
-      binder.markLiveness(b.taskId, { liveness: "stalled" });
-      EventLog.open(join(dataRoot, "events", `${b.graphId}.events.ndjson`)).append("stall", {
-        taskId: b.taskId,
-        runId: b.runId,
-        note: "boot-reattach: process gone",
-      });
-      atomicWriteFileSync(
-        join(dataRoot, "reports", `${now.toISOString().replaceAll(":", "-")}-stalled-${b.taskId}.json`),
-        JSON.stringify({ kind: "stalled", graphId: b.graphId, taskId: b.taskId, runId: b.runId, note: "boot 重挂时进程已消失", at: now.toISOString() }, null, 2),
-      );
+      // 死了标 stalled 报人（只报不修）。
+      // 去重：liveness 持久化在台账里，已报过 stalled 的绑定重启不再重复写事件/报告
+      // （否则 blocked/stalled 长挂任务每重启一次就刷一份报告——审核发现的噪音点）。
+      if (b.liveness !== "stalled") {
+        binder.markLiveness(b.graphId, b.taskId, { liveness: "stalled" });
+        EventLog.open(join(dataRoot, "events", `${b.graphId}.events.ndjson`)).append("stall", {
+          taskId: b.taskId,
+          runId: b.runId,
+          note: "boot-reattach: process gone",
+        });
+        atomicWriteFileSync(
+          join(dataRoot, "reports", `${now.toISOString().replaceAll(":", "-")}-stalled-${b.taskId}.json`),
+          JSON.stringify({ kind: "stalled", graphId: b.graphId, taskId: b.taskId, runId: b.runId, note: "boot 重挂时进程已消失", at: now.toISOString() }, null, 2),
+        );
+      }
       reattach.stalled.push(b.taskId);
     } else {
       reattach.reattached.push(b.taskId); // 活着：重挂探活（适配器已就位，monitor 下拍接管）

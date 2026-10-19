@@ -8,7 +8,8 @@
 //   - blocked → 状态翻 blocked + 上报落盘（reports/），等人裁（只报不修）。
 
 import { existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { join } from "node:path";
 import { readProjection, casWriteProjection } from "../persister/projection-store.ts";
 import { atomicWriteFileSync } from "../persister/atomic-write.ts";
@@ -33,12 +34,15 @@ export class EvidenceInsufficientError extends Error {
 }
 
 /** 机械核验白名单：{ verify:"mechanical", file } 存在性；{ verify:"mechanical", command } 退出码 */
-function verifyMechanical(check, { cwd, runner }: any) {
+// 命令核验必须异步：同步 execFileSync 会把宿主事件循环冻结到超时上限（30s/条），
+// 期间所有会话的流式输出与心跳全部停摆。
+const execFileAsync = promisify(execFile);
+async function verifyMechanical(check, { cwd, runner }: any) {
   if (check.file) return existsSync(join(cwd, check.file));
   if (check.command) {
-    const run = runner ?? ((cmd, dir) => execFileSync("sh", ["-c", cmd], { cwd: dir, stdio: "pipe", timeout: 30_000 }));
+    const run = runner ?? ((cmd, dir) => execFileAsync("sh", ["-c", cmd], { cwd: dir, timeout: 30_000 }));
     try {
-      run(check.command, cwd);
+      await run(check.command, cwd);
       return true;
     } catch {
       return false;
@@ -102,26 +106,26 @@ export class Acceptor {
     if (status !== "running") throw new NotRunningError(taskId, status);
 
     // 世代校验（stale-run 由 binder 抛）
-    this.binder.assertCurrent(taskId, runId);
+    this.binder.assertCurrent(graphId, taskId, runId);
 
     const task = graph.tasks.find((t) => t.id === taskId);
     const checks = task.checks.map(normalizeCheck);
     const missing: any[] = [];
-    checks.forEach((check, i) => {
+    for (const [i, check] of checks.entries()) {
       if (check.verify === "mechanical") {
         // 机械核验必须跑在执行者的工作目录（调用方传入），否则命令会在宿主进程 cwd 里执行
-        if (!verifyMechanical(check, { cwd: cwd ?? this.cwd, runner: this.runner })) {
+        if (!(await verifyMechanical(check, { cwd: cwd ?? this.cwd, runner: this.runner }))) {
           missing.push(`checks[${i}]「${check.text}」机械核验未通过`);
         }
       } else if (typeof evidence[i] !== "string" || !evidence[i].trim()) {
         missing.push(`checks[${i}]「${check.text}」缺证据`);
       }
-    });
+    }
 
     if (missing.length > 0) {
       // 打回：状态不变，事件留痕，经绑定 sessionId 通知执行者补证据
       events.append("reject", { taskId, runId, missing });
-      const binding = this.binder.byTask(taskId);
+      const binding = this.binder.byTask(graphId, taskId);
       if (this.notifier && binding) {
         // 通知是尽力而为：sendMessage 失败（属主不在场/宿主契约变化）不能吞掉打回语义，
         // 否则调用方拿到的是通知异常而不是 evidence-insufficient。
@@ -139,7 +143,7 @@ export class Acceptor {
       ...proj.data,
       [taskId]: { ...entry, status: "done", doneAt: now.toISOString() },
     });
-    this.binder.close(taskId, { outcome: "done" });
+    this.binder.close(graphId, taskId, { outcome: "done" });
     events.append("accept", { taskId, runId });
     return { accepted: true };
   }
@@ -153,7 +157,7 @@ export class Acceptor {
     const proj = readProjection(statePath);
     const entry = proj.data?.[taskId];
     if ((entry?.status ?? "pending") !== "running") throw new NotRunningError(taskId, entry?.status ?? "pending");
-    this.binder.assertCurrent(taskId, runId);
+    this.binder.assertCurrent(graphId, taskId, runId);
     casWriteProjection(statePath, proj.version, {
       ...proj.data,
       [taskId]: { ...entry, status: "blocked", blockedAt: now.toISOString(), blockReason: reason ?? null },

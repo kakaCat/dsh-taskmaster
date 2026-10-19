@@ -92,7 +92,7 @@ export interface PlanCard {
   graphId: string;
   graphVersion: number;
   readyHash: string;
-  batch: Array<{ taskId: string; statement: string }>;
+  batch: Array<{ taskId: string; statement: string; /** 本任务验收时将执行的 mechanical 命令（人审可见性） */ mechanicalCommands?: string[] }>;
   readyCount: number;
   conflicts: Array<{ tasks: string[]; scopes: string[] }>;
   concurrency: number;

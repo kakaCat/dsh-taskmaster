@@ -51,8 +51,8 @@ export class Monitor {
       const activity = this.adapters.activityOf?.(b.sessionId) ?? null;
       const grew = activity !== null && activity > (b.lastEventSeq ?? 0);
       if (grew) {
-        this.binder.touchEventSeq(b.taskId, activity);
-        this.binder.markLiveness(b.taskId, { liveness: "alive", lastActivityAt: now.toISOString() });
+        this.binder.touchEventSeq(b.graphId, b.taskId, activity);
+        this.binder.markLiveness(b.graphId, b.taskId, { liveness: "alive", lastActivityAt: now.toISOString() });
         results.push({ taskId: b.taskId, liveness: "alive" });
         continue;
       }
@@ -68,7 +68,7 @@ export class Monitor {
           } catch {
             /* 探活失败不抛：仍沉默下拍判 stalled */
           }
-          this.binder.markLiveness(b.taskId, { liveness: "silent" });
+          this.binder.markLiveness(b.graphId, b.taskId, { liveness: "silent" });
           events.append("probe", { taskId: b.taskId, runId: b.runId, sessionId: b.sessionId });
           results.push({ taskId: b.taskId, liveness: "silent", probed: true });
         } else {
@@ -77,7 +77,7 @@ export class Monitor {
         }
       } else {
         b.probedAt = undefined; // 有活动迹象（回到 TTL 内）→ 探活回合重置
-        this.binder.markLiveness(b.taskId, { liveness: "silent" });
+        this.binder.markLiveness(b.graphId, b.taskId, { liveness: "silent" });
         results.push({ taskId: b.taskId, liveness: "silent" });
       }
     }
@@ -87,7 +87,7 @@ export class Monitor {
   /** 标记 + 事件 + 上报落盘（唯一动作；绝不派发、绝不重跑）。活性是投影：执行者自己活过来可回 alive，但已上报的留痕不撤。 */
   #mark(binding, liveness, events, now) {
     if (binding.liveness === liveness) return; // 已报过，不重复上报
-    this.binder.markLiveness(binding.taskId, { liveness });
+    this.binder.markLiveness(binding.graphId, binding.taskId, { liveness });
     events.append(liveness === "dead" ? "dead" : "stall", {
       taskId: binding.taskId,
       runId: binding.runId,

@@ -98,7 +98,7 @@ export class TaskmasterTools {
 
   /** IF-3 交卷 / 报 blocked（执行者回向；不按属主校验——执行者不是属主） */
   nodeUpdate = this.#wrap(async ({ graphId, taskId, runId, evidence, blocked = false, reason, cwd }) => {
-    const binding = this.e.binder.byTask(taskId);
+    const binding = this.e.binder.byTask(graphId, taskId);
     const graphVersion = binding?.graphVersion ?? this.e.store.meta(graphId).activeVersion;
     const graph = this.e.store.get(graphId, graphVersion); // 按派发时快照验收
     if (blocked) {
@@ -176,7 +176,7 @@ export class TaskmasterTools {
       (e as any).code = "bad-state";
       throw e;
     }
-    if (rule.closeBinding) this.e.binder.supersede(taskId, { reason: `${action} by ${actor ?? "unknown"}: ${reason ?? ""}` });
+    if (rule.closeBinding) this.e.binder.supersede(graphId, taskId, { reason: `${action} by ${actor ?? "unknown"}: ${reason ?? ""}` });
     casWriteProjection(statePath, proj.version, {
       ...proj.data,
       [taskId]: { ...proj.data[taskId], status: rule.toStatus, runId: null },

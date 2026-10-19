@@ -68,7 +68,7 @@ test("生命周期态如实标注（暂停/注销可见）+ 状态计数", () =>
 test("在途详情：状态 + 活性投影 + runId（绑定台账寻址）", () => {
   const { dir, binder, st, graphId } = setup();
   const b = binder.open({ graphId, graphVersion: 1, taskId: "t-1", sessionId: "s-1", channel: "spawn" });
-  binder.markLiveness("t-1", { liveness: "silent" });
+  binder.markLiveness(graphId, "t-1", { liveness: "silent" });
   const p = join(dir, "state", `${graphId}.state.json`);
   casWriteProjection(p, 0, { "t-1": { status: "running", runId: b.runId } });
   const v = st.status({ graphId });

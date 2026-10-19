@@ -53,7 +53,7 @@ test("通道降级：高档挂 → 用下一档；留痕记录每档尝试", asy
   const dir = scratch();
   seedReady(dir, "g-1", "t-1");
   const d = new Deliverer(dir, {
-    channels: { startActivation: failChannel, spawn: okChannel("s-9") }, // branch 未注册 = unavailable
+    channels: { startActivation: failChannel, spawn: okChannel("s-9") },
     binder: new Binder(dir),
   });
   const r = await d.deliver({ graphId: "g-1", graphVersion: 1, graph, task: graph.tasks[0] });
@@ -61,7 +61,6 @@ test("通道降级：高档挂 → 用下一档；留痕记录每档尝试", asy
   const rec = JSON.parse(readFileSync(join(dir, "runs", r.runId, "delivery.json"), "utf8"));
   assert.deepEqual(rec.attempts.map((a) => [a.channel, a.ok]), [
     ["startActivation", false],
-    ["branch", false],
     ["spawn", true],
   ]);
 });

@@ -1,7 +1,8 @@
 // 绑定台账（FR-14）：(graphId, graphVersion, taskId, runId) 四元组唯一 + sessionId 寻址。
 // 薄模块：存储复用 persister（bindings.json 走原子写）；本模块的价值是不变量强制——
-//   ① 任务同时刻 ≤1 条活跃绑定（CAS 占位的台账侧）
-//   ② 同一 sessionId 不出现在两条活跃绑定（一窗口一单活）
+//   ① 同一图内任务同时刻 ≤1 条活跃绑定（CAS 占位的台账侧；任务 id 只在图内唯一，
+//      检索键必须是 (graphId, taskId)——跨图同名任务互不阻塞、互不串账）
+//   ② 同一 sessionId 不出现在两条活跃绑定（一窗口一单活；sessionId 全局唯一，不带 graphId）
 //   ③ 世代：新绑定签发新 runId，旧世代回话 stale-run 拒收
 // 历史不在这里：终态关绑定，永久留痕在 events/ 与 runs/。
 
@@ -56,8 +57,9 @@ export class Binder {
     return this.bindings.filter((b) => b.state === "active");
   }
 
-  byTask(taskId) {
-    return this.active().find((b) => b.taskId === taskId) ?? null;
+  /** 图内检索：任务 id 只在图内唯一，所有按任务的读写都必须带 graphId */
+  byTask(graphId, taskId) {
+    return this.active().find((b) => b.graphId === graphId && b.taskId === taskId) ?? null;
   }
 
   /** 寻址查询忽略未挂会话的预留绑定 */
@@ -71,7 +73,7 @@ export class Binder {
    * 不变量①在此强制；不变量②在 attachSession 强制。
    */
   reserve({ graphId, graphVersion, taskId, channel }: Pick<BindingRecord, "graphId" | "graphVersion" | "taskId"> & { channel?: string | null }, now: Date = new Date()): BindingRecord {
-    const onTask = this.byTask(taskId);
+    const onTask = this.byTask(graphId, taskId);
     if (onTask) {
       throw new BindingConflictError("任务已有活跃绑定", `task=${taskId} run=${onTask.runId}`);
     }
@@ -93,8 +95,8 @@ export class Binder {
   }
 
   /** 投递成功后补挂会话与通道；同一 sessionId 不出现在两条活跃绑定（不变量②） */
-  attachSession(taskId: string, runId: string, sessionId: string, channel: string | null = null): BindingRecord {
-    const b = this.byTask(taskId);
+  attachSession(graphId: string, taskId: string, runId: string, sessionId: string, channel: string | null = null): BindingRecord {
+    const b = this.byTask(graphId, taskId);
     if (!b || b.runId !== runId) throw new BindingConflictError("预留绑定不存在或世代不符", `task=${taskId} run=${runId}`);
     const onSession = this.bySession(sessionId);
     if (onSession && onSession !== b) {
@@ -107,8 +109,8 @@ export class Binder {
   }
 
   /** 投递失败回收预留（不自动重试的台账侧） */
-  drop(taskId: string, runId: string): void {
-    const b = this.byTask(taskId);
+  drop(graphId: string, taskId: string, runId: string): void {
+    const b = this.byTask(graphId, taskId);
     if (b && b.runId === runId) {
       this.bindings = this.bindings.filter((x) => x !== b);
       this.#persist();
@@ -118,7 +120,7 @@ export class Binder {
   /** 投递成功建绑定（= reserve + attachSession 的便捷组合，测试与同步路径用） */
   open({ graphId, graphVersion, taskId, sessionId, channel }: { graphId: string; graphVersion: number; taskId: string; sessionId: string; channel?: string | null }, now: Date = new Date()): BindingRecord {
     const b = this.reserve({ graphId, graphVersion, taskId, channel }, now);
-    return this.attachSession(taskId, b.runId, sessionId);
+    return this.attachSession(graphId, taskId, b.runId, sessionId);
   }
 
   byGraph(graphId) {
@@ -126,8 +128,8 @@ export class Binder {
   }
 
   /** 任务终态关绑定（留痕在 events/runs，台账条目移除） */
-  close(taskId: string, { outcome }: { outcome?: string | null } = {}): BindingRecord | null {
-    const b = this.byTask(taskId);
+  close(graphId: string, taskId: string, { outcome }: { outcome?: string | null } = {}): BindingRecord | null {
+    const b = this.byTask(graphId, taskId);
     if (!b) return null;
     b.state = "closed";
     b.closedAt = new Date().toISOString();
@@ -141,16 +143,16 @@ export class Binder {
    * 世代校验：交卷/探活回报必须持当前世代 runId。
    * @returns 当前绑定；世代不符抛 stale-run，无绑定抛 binding-conflict
    */
-  assertCurrent(taskId: string, runId: string): BindingRecord {
-    const b = this.byTask(taskId);
+  assertCurrent(graphId: string, taskId: string, runId: string): BindingRecord {
+    const b = this.byTask(graphId, taskId);
     if (!b) throw new BindingConflictError("任务无活跃绑定", `task=${taskId}`);
     if (b.runId !== runId) throw new StaleRunError(taskId, runId);
     return b;
   }
 
   /** 探活游标：记录该绑定看到的最后事件 seq */
-  touchEventSeq(taskId: string, seq: number): void {
-    const b = this.byTask(taskId);
+  touchEventSeq(graphId: string, taskId: string, seq: number): void {
+    const b = this.byTask(graphId, taskId);
     if (b && seq > b.lastEventSeq) {
       b.lastEventSeq = seq;
       this.#persist();
@@ -158,8 +160,8 @@ export class Binder {
   }
 
   /** 监控元数据：活性投影与最后活动时间（投影，不进主状态机；由 monitor 写入） */
-  markLiveness(taskId: string, { liveness, lastActivityAt }: { liveness?: BindingRecord["liveness"]; lastActivityAt?: string } = {}): void {
-    const b = this.byTask(taskId);
+  markLiveness(graphId: string, taskId: string, { liveness, lastActivityAt }: { liveness?: BindingRecord["liveness"]; lastActivityAt?: string } = {}): void {
+    const b = this.byTask(graphId, taskId);
     if (!b) return;
     if (liveness !== undefined) b.liveness = liveness;
     if (lastActivityAt !== undefined) b.lastActivityAt = lastActivityAt;
@@ -167,7 +169,7 @@ export class Binder {
   }
 
   /** 人裁重派：关闭旧绑定（若有），由调用方随后 open 新绑定（新 runId 自然成为新世代） */
-  supersede(taskId: string, { reason }: { reason?: string } = {}): BindingRecord | null {
-    return this.close(taskId, { outcome: `superseded: ${reason ?? "人裁"}` });
+  supersede(graphId: string, taskId: string, { reason }: { reason?: string } = {}): BindingRecord | null {
+    return this.close(graphId, taskId, { outcome: `superseded: ${reason ?? "人裁"}` });
   }
 }

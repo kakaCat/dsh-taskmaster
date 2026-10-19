@@ -4,7 +4,7 @@
 //   - at-most-once：占位 + binder 不变量双保险，同任务同世代最多一个在途 run；
 //   - 失败回滚：任何一步失败 → 回 ready、零绑定残留、不自动重试；
 //   - 每次投递尝试（含失败）在 runs/ 留痕；
-//   - 通道降级链：startActivation → branch → spawn → 纯对话流（全挂 = 降级出卡，不派送）。
+//   - 通道降级链：startActivation → spawn → 纯对话流（全挂 = 降级出卡，不派送）。
 // 通道是注入的适配器：真实实现接宿主 subagent/window service（live parent 约束见 IF-8），
 // 测试用假通道。通道函数签名：async (taskPackage) => { sessionId }。
 
@@ -47,8 +47,9 @@ export class DeliveryDeferredError extends Error {
   }
 }
 
-/** 默认通道优先级（IF-8）；"conversation" 不在链里——全挂时由调用方转纯对话流 */
-export const CHANNEL_ORDER = ["startActivation", "branch", "spawn"];
+/** 默认通道优先级（IF-8）；"conversation" 不在链里——全挂时由调用方转纯对话流。
+ *  曾有 branch 档（window.openBranch），但宿主服务目录不存在 window 服务——死通道已移除。 */
+export const CHANNEL_ORDER = ["startActivation", "spawn"];
 
 /** 任务包组装（FR-5 视野最小化 + FR-10 世代凭据）：只含本任务投影 + runId + 前驱产物的路径+摘要 */
 export function assemblePackage(graph: any, task: any, { artifacts = {}, binding = {} }: any = {}) {
@@ -75,7 +76,7 @@ export class Deliverer {
   binder: any;
   /**
    * @param dataRoot 数据根
-   * @param channels { startActivation?, branch?, spawn? } 通道适配器
+   * @param channels { startActivation?, spawn? } 通道适配器
    * @param binder Binder 实例
    */
   constructor(dataRoot, { channels = {}, binder }: any = {}) {
@@ -147,7 +148,7 @@ export class Deliverer {
 
     // ④ 全挂 → 回收预留 + 回滚 + 失败留痕，不自动重试
     if (!sessionId) {
-      this.binder.drop(task.id, reserved.runId);
+      this.binder.drop(graphId, task.id, reserved.runId);
       const back = readProjection(statePath);
       casWriteProjection(statePath, back.version, {
         ...back.data,
@@ -161,9 +162,9 @@ export class Deliverer {
     // ⑤ 补挂会话（不变量②在此强制）；冲突 → 回收 + 回滚
     let binding;
     try {
-      binding = this.binder.attachSession(task.id, reserved.runId, sessionId, usedChannel);
+      binding = this.binder.attachSession(graphId, task.id, reserved.runId, sessionId, usedChannel);
     } catch (e: any) {
-      this.binder.drop(task.id, reserved.runId);
+      this.binder.drop(graphId, task.id, reserved.runId);
       const back = readProjection(statePath);
       casWriteProjection(statePath, back.version, {
         ...back.data,

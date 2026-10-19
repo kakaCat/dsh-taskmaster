@@ -2,6 +2,8 @@
 // 重放规则（按 seq 顺序 fold）：
 //   ready → ready；dispatch → running；accept → done；reject → running（打回不翻状态，已在 running）；
 //   blocked → blocked；delivery-failed / reconcile-reset-dispatching → ready；
+//   人裁（tools.ts 的 taskAction 留痕）：task-resume / task-reassign → ready，task-reopen → pending
+//   ——漏掉这三条 = 重启后人裁凭空消失（reopen 的 done→pending 回弹成 done，永不再干）。
 //   其余事件（plan-*/stall/dead/graph-*/register/reconcile-close-binding）不改任务状态。
 
 const FOLD = {
@@ -25,6 +27,16 @@ const FOLD = {
   },
   "reconcile-reset-dispatching": (e, map) => {
     map[e.taskId] = { ...map[e.taskId], status: "ready" };
+  },
+  // 人裁新世代：投影侧 taskAction 已把 runId 置 null（旧世代凭据作废），重放保持同口径
+  "task-resume": (e, map) => {
+    map[e.taskId] = { ...map[e.taskId], status: "ready", runId: null };
+  },
+  "task-reassign": (e, map) => {
+    map[e.taskId] = { ...map[e.taskId], status: "ready", runId: null };
+  },
+  "task-reopen": (e, map) => {
+    map[e.taskId] = { ...map[e.taskId], status: "pending", runId: null };
   },
 };
 

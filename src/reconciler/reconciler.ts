@@ -103,7 +103,7 @@ export class Reconciler {
     for (const [taskId, entry] of Object.entries(statusMap) as [string, any][]) {
       const b = bindings.find((x) => x.taskId === taskId);
       if (entry.status === "done" && b) {
-        this.binder.close(taskId, { outcome: "reconcile-close" });
+        this.binder.close(graphId, taskId, { outcome: "reconcile-close" });
         events.append("reconcile-close-binding", { taskId, runId: b.runId });
         summary.actions.push(`close-binding:${taskId}`);
       }
@@ -163,8 +163,11 @@ export class Reconciler {
     // 必须先于就绪空早退：confirmed 批次的任务状态已是 ready，不在就绪计算里。
     const card = this.gate.current(graphId);
     if (card?.state === "confirmed") {
+      // 按卡冻结的图版本取任务定义：确认后图被改过时，执行者拿到的陈述与验收判据
+      // 必须同版（acceptor 按绑定里的 graphVersion 验收）——不能用活跃版本混装。
+      const graphAtCard = card.graphVersion === meta.activeVersion ? graph : this.store.get(graphId, card.graphVersion);
       const deliverable = card.batch
-        .map((item) => graph.tasks.find((t) => t.id === item.taskId))
+        .map((item) => graphAtCard.tasks.find((t) => t.id === item.taskId))
         .filter((task) => task && (statusMap[task.id]?.status ?? "pending") === "ready");
       if (deliverable.length > 0) {
         // 批次还有未派出的 ready 任务：要么补投递，要么（降级中）等——绝不落出卡逻辑覆盖已确认的卡
@@ -174,7 +177,7 @@ export class Reconciler {
         }
         for (const task of deliverable) {
           try {
-            const r = await this.deliverer.deliver({ graphId, graphVersion: card.graphVersion, graph, task }, now);
+            const r = await this.deliverer.deliver({ graphId, graphVersion: card.graphVersion, graph: graphAtCard, task }, now);
             summary.actions.push(`delivered:${task.id}:${r.runId}`);
           } catch (e: any) {
             if (e instanceof DeliveryDeferredError) {

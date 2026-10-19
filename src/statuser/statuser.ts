@@ -71,7 +71,7 @@ export class Statuser {
     if (taskId) {
       const task = graph.tasks.find((t) => t.id === taskId);
       if (!task) return { notice: `任务 ${taskId} 不在图 ${graphId}@${meta.activeVersion}` };
-      const binding = this.binder.byTask(taskId);
+      const binding = this.binder.byTask(graphId, taskId);
       return {
         graphId,
         taskId,
@@ -100,7 +100,7 @@ export class Statuser {
       ready: readyInfo.ready.map((t) => t.id),
       waiting: readyInfo.waiting.map((w) => ({ taskId: w.task.id, pendingDeps: w.pendingDeps })), // 在等谁
       inFlight: readyInfo.inFlight.map((t) => {
-        const b = this.binder.byTask(t.id);
+        const b = this.binder.byTask(graphId, t.id);
         return { taskId: t.id, status: statusOf(t.id), liveness: b?.liveness ?? null, runId: b?.runId ?? null };
       }),
       plan: this.gate.current(graphId)
@@ -108,6 +108,11 @@ export class Statuser {
         : null,
     };
     if (groupBy) {
+      // 白名单防御：groupBy 直接进属性读写，"__proto__" 这类键会摸到原型链（原型污染面）
+      if (!["kind", "story", "milestone"].includes(groupBy)) {
+        view.groupBy = { field: String(groupBy), notice: "不支持的分组字段（可选 kind | story | milestone）" };
+        return view;
+      }
       const groups: any = {};
       for (const t of graph.tasks) {
         const key = t[groupBy] ?? "（未分组）";
